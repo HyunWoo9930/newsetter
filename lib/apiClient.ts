@@ -14,10 +14,12 @@ const jsonInit = (method: string, body: unknown): RequestInit => ({
   body: JSON.stringify(body),
 });
 
+const noStore: RequestInit = { cache: "no-store" };
+
 export const api = {
-  me: () => fetch("/api/me").then(j),
+  me: () => fetch("/api/me", noStore).then(j),
   gymsList: (q?: string) => fetch(`/api/gyms${q ? `?q=${encodeURIComponent(q)}` : ""}`).then(j),
-  crews: () => fetch("/api/crews").then(j),
+  crews: () => fetch("/api/crews", noStore).then(j),
   crew: (id: string) => fetch(`/api/crews/${id}`).then(j),
   crewGyms: (id: string) => fetch(`/api/crews/${id}/gyms`).then(j),
   crewPolls: (id: string) => fetch(`/api/crews/${id}/polls`).then(j),

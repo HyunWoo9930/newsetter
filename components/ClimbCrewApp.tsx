@@ -79,13 +79,23 @@ const PlayDot = () => (<svg width="12" height="12" viewBox="0 0 12 12"><path d="
 /* eslint-disable @typescript-eslint/no-explicit-any */
 type Any = any;
 
+// 새로고침해도 현재 화면을 유지하기 위한 네비게이션 스냅샷 (sessionStorage)
+const NAV_KEY = "setter.nav";
+// 로그인 없이 바로 복원해도 되는(디테일 포함) 화면들. 폼/모달성 화면은 제외 → 홈으로.
+const RESTORABLE = new Set(["home", "explore", "calendar", "profile", "gymDetail", "probList", "probDetail", "record"]);
+function readNav(): Any {
+  if (typeof window === "undefined") return null;
+  try { return JSON.parse(sessionStorage.getItem(NAV_KEY) || "null"); } catch { return null; }
+}
+
 export default function ClimbCrewApp() {
+  const [nav0] = useState(readNav); // 마운트 시 1회 로드한 스냅샷
   // 네비게이션 / 입력 상태
   const [screen, setScreen] = useState("login");
-  const [hist, setHist] = useState<string[]>([]);
-  const [selGym, setSelGym] = useState<string | null>(null);
-  const [selSettingId, setSelSettingId] = useState<string | null>(null);
-  const [selProb, setSelProb] = useState<string | null>(null);
+  const [hist, setHist] = useState<string[]>(() => (Array.isArray(nav0?.hist) ? nav0.hist : []));
+  const [selGym, setSelGym] = useState<string | null>(() => nav0?.selGym ?? null);
+  const [selSettingId, setSelSettingId] = useState<string | null>(() => nav0?.selSettingId ?? null);
+  const [selProb, setSelProb] = useState<string | null>(() => nav0?.selProb ?? null);
   const [switcherOpen, setSwitcherOpen] = useState(false);
   const [toast, setToast] = useState("");
   const [sort, setSort] = useState<"easy" | "hard">("easy");
@@ -102,7 +112,7 @@ export default function ClimbCrewApp() {
   // 라이브 데이터
   const [me, setMe] = useState<Any>(null);
   const [crews, setCrews] = useState<Any[]>([]);
-  const [activeCrewId, setActiveCrewId] = useState<string | null>(null);
+  const [activeCrewId, setActiveCrewId] = useState<string | null>(() => nav0?.activeCrewId ?? null);
   const [crewGyms, setCrewGyms] = useState<Any[]>([]);
   const [polls, setPolls] = useState<Any[]>([]);
   const [visits, setVisits] = useState<Any[]>([]);
@@ -118,6 +128,7 @@ export default function ClimbCrewApp() {
   const { status } = useSession();
   const kakaoEnabled = process.env.NEXT_PUBLIC_KAKAO_ENABLED === "true";
   const [bootstrapped, setBootstrapped] = useState(false);
+  const startWasAuto = useRef(false); // 크루 없음으로 자동 이동한 start 인지(수동 '코드로 참여'와 구분)
 
   // 투표 로컬 선택
   const [voteDates, setVoteDates] = useState<Record<string, boolean>>({});
@@ -174,13 +185,25 @@ export default function ClimbCrewApp() {
     if (inv) { setJoinCode(inv); setInvitePending(true); }
   }, []);
 
+  const loadCrews = useCallback(() =>
+    api.crews().then((cs: Any) => { setCrews(cs); setActiveCrewId((prev) => prev ?? (cs[0]?.id ?? null)); return cs as Any[]; }), []);
+
   // 세션이 확정되면(카카오 로그인 완료 포함) 내 정보·크루를 다시 불러온다.
   // 로그인 전 한 번 빈 결과를 받아도 로그인 후 재조회되도록 status 의존.
   useEffect(() => {
     if (status === "loading") return;
     api.me().then(setMe).catch(() => setMe(null));
-    api.crews().then((cs: Any) => { setCrews(cs); setActiveCrewId((prev) => prev ?? (cs[0]?.id ?? null)); }).catch(() => {}).finally(() => setBootstrapped(true));
-  }, [status]);
+    loadCrews().catch(() => {}).finally(() => setBootstrapped(true));
+  }, [status, loadCrews]);
+
+  // 뒤로가기 복원(bfcache)·탭 복귀 시 크루를 다시 불러온다 (로그인 직후 stale 방지)
+  useEffect(() => {
+    const refetch = () => { if (status === "authenticated") loadCrews().catch(() => {}); };
+    const onVis = () => { if (document.visibilityState === "visible") refetch(); };
+    window.addEventListener("pageshow", refetch);
+    document.addEventListener("visibilitychange", onVis);
+    return () => { window.removeEventListener("pageshow", refetch); document.removeEventListener("visibilitychange", onVis); };
+  }, [status, loadCrews]);
 
   // 카카오톡 공유 SDK (JS 키가 있을 때만 로드)
   useEffect(() => {
@@ -195,10 +218,42 @@ export default function ClimbCrewApp() {
     document.head.appendChild(s);
   }, []);
 
-  // 카카오 세션이 확인되면 로그인 화면을 건너뜀
+  // 카카오 세션이 확인되면 로그인 화면을 건너뜀 (새로고침이면 이전 화면 복원)
   useEffect(() => {
-    if (status === "authenticated" && bootstrapped && screen === "login") { setHist([]); setScreen(invitePending || !crews.length ? "start" : "home"); }
-  }, [status, bootstrapped, screen, crews.length, invitePending]);
+    if (status === "authenticated" && bootstrapped && screen === "login") {
+      const saved = nav0?.screen as string | undefined;
+      // 저장된 상세화면은 필요한 선택값이 있을 때만 복원
+      const savedOk = !!saved && RESTORABLE.has(saved) &&
+        (saved !== "gymDetail" || !!selGym) &&
+        (saved !== "probList" || !!selGym) &&
+        (saved !== "probDetail" || !!selProb);
+      let next: string;
+      if (invitePending || !crews.length) next = "start";
+      else if (savedOk) next = saved as string;
+      else next = "home";
+      startWasAuto.current = next === "start";
+      if (!savedOk) setHist([]); // 복원이 아니면 백스택 초기화
+      setScreen(next);
+    }
+  }, [status, bootstrapped, screen, crews.length, invitePending]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // 화면/선택/크루/백스택을 세션에 저장 (새로고침 복원용). 로그인 화면은 저장 안 함.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      if (screen === "login") sessionStorage.removeItem(NAV_KEY);
+      else sessionStorage.setItem(NAV_KEY, JSON.stringify({ screen, hist, activeCrewId, selGym, selSettingId, selProb }));
+    } catch { /* storage 불가 시 무시 */ }
+  }, [screen, hist, activeCrewId, selGym, selSettingId, selProb]);
+
+  // 크루가 없어 자동으로 start 로 갔는데, 뒤늦게 크루가 로드되면 홈으로 복구.
+  // (사용자가 '코드로 참여'로 직접 온 start 는 startWasAuto=false 라 건드리지 않음)
+  useEffect(() => {
+    if (status === "authenticated" && screen === "start" && startWasAuto.current && !invitePending && crews.length > 0) {
+      startWasAuto.current = false;
+      setHist([]); setScreen("home");
+    }
+  }, [status, screen, crews.length, invitePending]);
 
   const reloadCrew = useCallback((id: string) => {
     api.crewGyms(id).then((rows: Any) => { setCrewGyms(rows); const first = rows.find((r: Any) => r.latestSetting); if (first) setSelSettingId((s) => s ?? first.latestSetting.id); }).catch(() => {});
