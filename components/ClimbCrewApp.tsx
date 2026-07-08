@@ -116,6 +116,7 @@ export default function ClimbCrewApp() {
   const [crewGyms, setCrewGyms] = useState<Any[]>([]);
   const [polls, setPolls] = useState<Any[]>([]);
   const [visits, setVisits] = useState<Any[]>([]);
+  const [detailVisitId, setDetailVisitId] = useState<string | null>(null);
   const [visitEdit, setVisitEdit] = useState<Any | null>(null);
   const [visitEditDate, setVisitEditDate] = useState("");
   const [visitEditGymId, setVisitEditGymId] = useState<string | null>(null);
@@ -364,6 +365,7 @@ export default function ClimbCrewApp() {
   const cancelVisit = async (v: Any) => { try { await api.visitCancel(v.id); reloadVisits(); showToast("일정을 취소했어요"); } catch (e: Any) { showToast(e.message); } };
   const openVisitEdit = (v: Any) => { setVisitEdit(v); setVisitEditDate(String(v.date).slice(0, 10)); setVisitEditGymId(v.gym?.id ?? null); setVisitEditGymQ(""); };
   const saveVisitEdit = async () => { if (!visitEdit) return; if (!visitEditDate) { showToast("날짜를 골라주세요"); return; } try { await api.visitUpdate(visitEdit.id, { date: visitEditDate, gymId: visitEditGymId || undefined }); setVisitEdit(null); reloadVisits(); showToast("일정을 변경했어요"); } catch (e: Any) { showToast(e.message); } };
+  const openVisitDetail = (v: Any) => setDetailVisitId(v.id);
 
   const openCreatePoll = () => { setPollTitle(""); setPollRange({ start: null, end: null }); setPollDeadlineDays(5); setPollGymIds([]); setPickedDay(null); setPollCalOffset(0); setGymSearch(""); go("createPoll"); };
   // 범위 선택: 첫 탭=시작, 둘째 탭=끝(시작보다 빠르면 시작을 다시 잡음). 이미 범위가 있으면 새로 시작.
@@ -475,9 +477,12 @@ export default function ClimbCrewApp() {
 
   const openVote = openPoll ? { id: openPoll.id, title: openPoll.title, deadline: fmtDeadline(openPoll.deadline), responded: openPoll.responderCount ?? 0, total: memberCount } : null;
   const respondedCount = (openVote?.responded ?? 0);
-  const confirmedPoll = polls.find((p) => p.confirmedDate);
   const canClose = !!(me && openPoll && openPoll.creatorId === me.id); // #1 투표 만든 사람만 마감
-  const upcoming = confirmedPoll ? { date: fmtDate(confirmedPoll.confirmedDate), gym: confirmedPoll.confirmedGymName || "", going: confirmedPoll.responderCount ?? 0 } : null;
+  // 다음 세션 = 실제 확정된 Visit(가장 가까운 미래). 취소하면 사라지도록 Visit 기준으로 계산.
+  const _todayMid0 = new Date(); _todayMid0.setHours(0, 0, 0, 0);
+  const nextVisit = [...visits].filter((v) => new Date(v.date).getTime() >= _todayMid0.getTime()).sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())[0] || null;
+  const upcoming = nextVisit ? { visit: nextVisit, date: fmtDate(nextVisit.date), gym: nextVisit.gym?.name || "", going: nextVisit.attendeeCount ?? 0 } : null;
+  const detailVisit = detailVisitId ? visits.find((v) => v.id === detailVisitId) || null : null; // #2 세션 상세 (취소되면 자동으로 사라짐)
 
   const adaptProb = (p: Any) => ({ id: p.id, color: p.color, tag: tagOf(p.label, p.color), feel: feelFromScore(p.difficultyScore), send: p.sendRate == null ? 0 : Math.round(p.sendRate * 100), honey: (p.honeyRatio ?? 0) > 0 || (p.honeyCount ?? 0) > 0, videos: p.videoCount ?? 0, mine: !!p.mySent, hex: HEX[p.color] || "#999" });
   const probGroups = (problemsData?.colors ?? []).map((c: Any) => { const items = c.problems.map(adaptProb); items.sort((a: Any, b: Any) => (sort === "easy" ? a.feel - b.feel : b.feel - a.feel)); return { color: c.color, items }; });
@@ -521,13 +526,14 @@ export default function ClimbCrewApp() {
     const canEdit = !!me && (v.createdById === me.id || ac?.leaderId === me.id);
     return (
     <div key={v.id} style={{ padding: 14, ...cardStyle, ...(v.mine ? { border: `2px solid #2E6B22`, background: "#EAF7EE" } : {}) }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+      <div onClick={() => openVisitDetail(v)} style={{ display: "flex", alignItems: "center", gap: 12, cursor: "pointer" }}>
         <div style={{ width: 44, height: 44, borderRadius: 12, flexShrink: 0, background: future ? "#FBF0DA" : "#E4F5EC", display: "flex", alignItems: "center", justifyContent: "center" }}>
           {future ? <svg width="20" height="20" viewBox="0 0 24 24" fill="none"><rect x="3.5" y="5" width="17" height="15.5" rx="2.5" stroke="#E24D3A" strokeWidth="1.8" /><path d="M3.5 9.5h17M8 3.5v3M16 3.5v3" stroke="#E24D3A" strokeWidth="1.8" strokeLinecap="round" /></svg>
                   : <svg width="20" height="20" viewBox="0 0 20 20"><path d="M4 10.5 8 14.5 16 5.5" stroke="#6BBF59" strokeWidth="2.4" fill="none" strokeLinecap="round" strokeLinejoin="round" /></svg>}
         </div>
         <div style={{ flex: 1, minWidth: 0 }}><div style={{ fontSize: 15, fontWeight: 700 }}>{v.gym?.name}</div><div style={{ fontSize: 12, color: "#514C44", marginTop: 2 }}>{fmtDate(v.date)} · {v.source === "VOTE" ? "투표 확정" : "직접 추가"}{typeof v.attendeeCount === "number" && v.attendeeCount > 0 ? ` · ${v.attendeeCount}명 가요` : ""}</div></div>
         {v.mine && <span style={{ fontSize: 11, fontWeight: 800, color: "#2E6B22", background: "#CDEBD4", border: "1.5px solid #2E6B22", borderRadius: 999, padding: "3px 9px", flexShrink: 0 }}>내가 가요</span>}
+        <ChevR />
       </div>
       {future && (
         <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
@@ -767,12 +773,15 @@ export default function ClimbCrewApp() {
 
               <div style={{ padding: "14px 16px 0" }}>
                 {upcoming ? (
-                  <div style={{ position: "relative", padding: "16px 18px 14px", background: "#FFFEFA", border: `2.5px solid #4E9D57`, borderRadius: WOBS[0], transform: "rotate(-0.4deg)" }}>
+                  <div onClick={() => openVisitDetail(upcoming.visit)} style={{ position: "relative", padding: "16px 18px 14px", background: "#FFFEFA", border: `2.5px solid #4E9D57`, borderRadius: WOBS[0], transform: "rotate(-0.4deg)", cursor: "pointer" }}>
                     <span style={{ position: "absolute", top: -12, right: 12, transform: "rotate(7deg)", fontSize: 16, fontWeight: 700, padding: "0 12px", color: INK, background: `repeating-linear-gradient(50deg, rgba(${CRAYON.yellow},0.85) 0 4px, rgba(${CRAYON.yellow},0.6) 4px 7px)`, border: `2px solid ${INK}`, borderRadius: WOBS[2] }}>확정!</span>
                     <div style={{ fontSize: 15, color: "#8C857B", fontWeight: 700 }}>다음 세션</div>
                     <div style={{ fontSize: 32, fontWeight: 700, lineHeight: 1.05, margin: "4px 0 2px" }}>{upcoming.date}</div>
                     <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 19, fontWeight: 700, marginTop: 2 }}><span style={{ width: 18, height: 18, flexShrink: 0, border: `2px solid ${INK}`, borderRadius: "170px 40px 190px 30px / 30px 190px 40px 170px", background: hatchSoft(CRAYON.green) }} />{upcoming.gym}</div>
-                    {upcoming.going > 0 && <div style={{ fontSize: 16, fontWeight: 700, color: "#443F38", marginTop: 8 }}>{upcoming.going}명이나 가요!</div>}
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 8 }}>
+                      <div style={{ fontSize: 15, fontWeight: 700, color: "#443F38" }}>{upcoming.going > 0 ? `${upcoming.going}명 가요${upcoming.visit?.mine ? " · 나 포함" : ""}` : "아직 참여자 없음"}</div>
+                      <div style={{ fontSize: 13, fontWeight: 700, color: "#4E9D57" }}>누가 가는지 ›</div>
+                    </div>
                   </div>
                 ) : (
                   <div style={{ padding: "16px 18px", border: "2.5px dashed rgba(58,54,51,0.4)", borderRadius: WOBS[0], background: "#FFFEFA", transform: "rotate(-0.3deg)" }}>
@@ -1384,6 +1393,42 @@ export default function ClimbCrewApp() {
             </div>
           </>
         )}
+        {detailVisit && (() => {
+          const v = detailVisit;
+          const future = new Date(v.date).getTime() >= _todayMid0.getTime();
+          const canEdit = !!me && (v.createdById === me.id || ac?.leaderId === me.id);
+          const atts: Any[] = v.attendees ?? [];
+          return (
+            <>
+              <div onClick={() => setDetailVisitId(null)} style={{ position: "absolute", inset: 0, background: "rgba(28,28,26,0.42)", zIndex: 120, animation: "ccfade .2s ease" }} />
+              <div style={{ position: "absolute", left: 0, right: 0, bottom: 0, zIndex: 130, background: "#FFFEFA", borderTop: `2.5px solid ${INK}`, borderRadius: "28px 22px 0 0 / 24px 28px 0 0", padding: "10px 16px 24px", boxShadow: "0 -8px 30px rgba(58,54,51,0.16)", animation: "ccsheet .28s cubic-bezier(.2,.8,.2,1)", display: "flex", flexDirection: "column", maxHeight: "84%" }}>
+                <div style={{ width: 44, height: 4, borderRadius: 999, background: "rgba(58,54,51,0.3)", margin: "6px auto 12px", transform: "rotate(-1deg)" }} />
+                <div style={{ display: "flex", alignItems: "center", gap: 10, margin: "0 2px 4px" }}>
+                  <div style={{ width: 40, height: 40, borderRadius: 12, flexShrink: 0, background: future ? "#FBF0DA" : "#E4F5EC", display: "flex", alignItems: "center", justifyContent: "center" }}><svg width="20" height="20" viewBox="0 0 24 24" fill="none"><rect x="3.5" y="5" width="17" height="15.5" rx="2.5" stroke="#E24D3A" strokeWidth="1.8" /><path d="M3.5 9.5h17M8 3.5v3M16 3.5v3" stroke="#E24D3A" strokeWidth="1.8" strokeLinecap="round" /></svg></div>
+                  <div style={{ flex: 1, minWidth: 0 }}><div style={{ fontSize: 19, fontWeight: 800 }}>{v.gym?.name}</div><div style={{ fontSize: 13, color: "#514C44", marginTop: 1 }}>{fmtDate(v.date)} · {v.source === "VOTE" ? "투표로 확정" : "직접 추가"}</div></div>
+                  {v.mine && <span style={{ fontSize: 11, fontWeight: 800, color: "#2E6B22", background: "#CDEBD4", border: "1.5px solid #2E6B22", borderRadius: 999, padding: "3px 9px", flexShrink: 0 }}>내가 가요</span>}
+                </div>
+                <div style={{ ...sectionLabel, margin: "16px 2px 10px" }}>가는 사람 {atts.length}명</div>
+                <div style={{ flex: 1, overflowY: "auto", display: "flex", flexDirection: "column", gap: 8, minHeight: 60 }}>
+                  {atts.length === 0 && <div style={{ padding: 14, ...cardStyle, color: "#514C44", fontSize: 13 }}>아직 아무도 없어요. 먼저 참여해보세요!</div>}
+                  {atts.map((a) => (
+                    <div key={a.userId} style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 12px", ...cardStyle, ...(a.userId === me?.id ? { border: "2px solid #2E6B22", background: "#EAF7EE" } : {}) }}>
+                      {a.user?.profileImg ? <img src={a.user.profileImg} alt="" style={{ width: 30, height: 30, borderRadius: "50% 46% 52% 48% / 48% 52% 46% 50%", objectFit: "cover", border: `1.5px solid ${INK}` }} /> : <div style={{ width: 30, height: 30, borderRadius: "50% 46% 52% 48% / 48% 52% 46% 50%", background: hatch(CRAYON.red), border: `1.5px solid ${INK}`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 13, fontWeight: 700, color: "#fff" }}>{(a.user?.nickname || "?")[0]}</div>}
+                      <div style={{ flex: 1, fontSize: 15, fontWeight: 700 }}>{a.user?.nickname}{a.userId === me?.id ? " (나)" : ""}</div>
+                    </div>
+                  ))}
+                </div>
+                {future && (
+                  <div style={{ display: "flex", gap: 8, marginTop: 14, flexShrink: 0 }}>
+                    <button onClick={() => attendVisit(v, !v.mine)} style={{ flex: 1, height: 48, border: `2px solid ${INK}`, borderRadius: WOBS[2], background: v.mine ? "#FFFEFA" : HILITE, fontSize: 16, fontWeight: 700, cursor: "pointer" }}>{v.mine ? "안 갈래요" : "나도 갈래요"}</button>
+                    {canEdit && <button onClick={() => { openVisitEdit(v); setDetailVisitId(null); }} style={{ height: 48, padding: "0 16px", border: `2px solid ${INK}`, borderRadius: WOBS[2], background: "#FFFEFA", fontSize: 16, fontWeight: 700, cursor: "pointer" }}>변경</button>}
+                    {canEdit && <button onClick={() => { if (typeof window !== "undefined" && window.confirm("이 일정을 취소할까요?")) { cancelVisit(v); setDetailVisitId(null); } }} style={{ height: 48, padding: "0 16px", border: "2px solid #C23A24", borderRadius: WOBS[2], background: "#FFFEFA", color: "#C23A24", fontSize: 16, fontWeight: 700, cursor: "pointer" }}>취소</button>}
+                  </div>
+                )}
+              </div>
+            </>
+          );
+        })()}
         {!!toast && (<div style={{ position: "absolute", left: "50%", bottom: 110, transform: "translateX(-50%) rotate(-0.6deg)", background: hatch("58,54,51"), color: "#FFFDF6", fontSize: 16, fontWeight: 700, padding: "10px 20px", border: `2px solid ${INK}`, borderRadius: WOBS[1], boxShadow: "0 8px 24px rgba(58,54,51,0.25)", whiteSpace: "nowrap", animation: "cctoast .25s ease", zIndex: 100 }}>{toast}</div>)}
       </div>
     </div>
