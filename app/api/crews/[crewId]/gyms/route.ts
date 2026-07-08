@@ -37,12 +37,15 @@ export async function GET(_req: Request, { params }: { params: Promise<{ crewId:
       id: g.id,
       name: g.name,
       address: g.address,
+      lat: g.lat,
+      lng: g.lng,
       instagram: g.instagram,
       isHome: homeSet.has(g.id),
       latestSetting: g.settings[0] ?? null,
       resetCycleWeeks: g.resetCycleWeeks,
       rating: r?._avg.rating ? Math.round(r._avg.rating * 10) / 10 : null,
       reviewCount: r?._count ?? 0,
+      lastVisit: lastVisitByGym.get(g.id) ?? null,
       ...rec,
     };
   });

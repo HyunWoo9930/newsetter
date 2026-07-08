@@ -1,8 +1,9 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { signIn, signOut, useSession } from "next-auth/react";
 import { api } from "@/lib/apiClient";
+import GymMap from "./GymMap";
 
 /* ===== 상수/헬퍼 ===== */
 /* 크레파스 테마 토큰: 종이 위에 연필 테두리 + 크레파스 빗금 채움 */
@@ -37,6 +38,16 @@ const fmtDate = (iso: string) => { const d = new Date(iso); return `${d.getMonth
 const fmtDateTime = (iso: string) => { const d = new Date(iso); return `${fmtDate(iso)} ${String(d.getHours()).padStart(2, "0")}:00~`; };
 const fmtDeadline = (iso: string | null) => { if (!iso) return "상시"; const diff = Math.ceil((new Date(iso).getTime() - Date.now()) / 86400000); return diff > 0 ? `D-${diff} 마감` : "마감"; };
 const rel = (iso: string) => { const diff = Math.floor((Date.now() - new Date(iso).getTime()) / 86400000); return diff <= 0 ? "오늘" : diff < 7 ? `${diff}일 전` : `${Math.floor(diff / 7)}주 전`; };
+// 프랜차이즈(체인) 추출 — 이름 첫 토큰이 브랜드. 단, "클라이밍" 같은 일반어면 두 토큰까지.
+const GENERIC_WORDS = new Set(["클라이밍", "볼더링", "볼더", "실내클라이밍", "스포츠클라이밍", "클라이밍짐"]);
+const brandOf = (name: string) => {
+  const t = (name || "").trim().split(/\s+/);
+  if (t.length >= 2 && GENERIC_WORDS.has(t[0])) return `${t[0]} ${t[1]}`;
+  return t[0] || name || "";
+};
+const PIN_RGB = ["226,77,58", "242,149,63", "230,180,20", "107,191,89", "91,141,238", "157,123,216"];
+const brandColorRgb = (name: string) => { const b = brandOf(name); return PIN_RGB[[...b].reduce((a, c) => a + c.charCodeAt(0), 0) % PIN_RGB.length]; };
+
 const handleOf = (ig: string | null) => {
   if (!ig) return "";
   let seg = "";
@@ -125,10 +136,12 @@ export default function ClimbCrewApp() {
   const [newDate, setNewDate] = useState("");
   const [newLabel, setNewLabel] = useState("저녁");
   const [exploreQ, setExploreQ] = useState("");
+  const [mapSel, setMapSel] = useState<string | null>(null);
   const [closeSheetOpen, setCloseSheetOpen] = useState(false);
   const [allGymsList, setAllGymsList] = useState<Any[]>([]);
   const [crewHomeGymIds, setCrewHomeGymIds] = useState<string[]>([]);
   const [manageHomeIds, setManageHomeIds] = useState<string[]>([]);
+  const [manageQ, setManageQ] = useState("");
   const [pickedDay, setPickedDay] = useState<string | null>(null);
   const [pollCalOffset, setPollCalOffset] = useState(0);
   const [gymSearch, setGymSearch] = useState("");
@@ -257,7 +270,7 @@ export default function ClimbCrewApp() {
     if (!crewHomeGymIds.includes(id) && crewHomeGymIds.length >= 4) showToast("홈 암장은 최대 4곳이에요");
     setCrewHomeGymIds((h) => (h.includes(id) ? h.filter((x) => x !== id) : h.length >= 4 ? h : [...h, id]));
   };
-  const openCrewManage = () => { setManageHomeIds(crewGyms.filter((g) => g.isHome).map((g) => g.id)); go("crewManage"); };
+  const openCrewManage = () => { setManageHomeIds(crewGyms.filter((g) => g.isHome).map((g) => g.id)); setManageQ(""); if (activeCrewId) reloadCrew(activeCrewId); go("crewManage"); };
   const toggleManageHome = (id: string) => {
     if (!manageHomeIds.includes(id) && manageHomeIds.length >= 4) showToast("홈 암장은 최대 4곳이에요");
     setManageHomeIds((h) => (h.includes(id) ? h.filter((x) => x !== id) : h.length >= 4 ? h : [...h, id]));
@@ -323,12 +336,34 @@ export default function ClimbCrewApp() {
   const ac = crews.find((c) => c.id === activeCrewId) || null;
   const memberCount = ac?._count?.members ?? crewDetail?._count?.members ?? 0;
 
-  const gyms = crewGyms.map((r, i) => ({ id: r.id, name: r.name, loc: r.address || "", rating: r.rating ?? 0, reviews: r.reviewCount ?? 0, weeks: r.weeksSinceVisit, ever: !!r.everVisited, due: !!r.dueForReset, cycle: r.resetCycleWeeks ?? 4, hasSet: !!r.latestSetting, isHome: !!r.isHome, color: PALETTE[i % PALETTE.length], settingId: r.latestSetting?.id ?? null, instagram: r.instagram }));
+  const gyms = crewGyms.map((r, i) => ({ id: r.id, name: r.name, loc: r.address || "", lat: r.lat ?? null, lng: r.lng ?? null, rating: r.rating ?? 0, reviews: r.reviewCount ?? 0, weeks: r.weeksSinceVisit, ever: !!r.everVisited, due: !!r.dueForReset, cycle: r.resetCycleWeeks ?? 4, hasSet: !!r.latestSetting, isHome: !!r.isHome, color: PALETTE[i % PALETTE.length], settingId: r.latestSetting?.id ?? null, instagram: r.instagram, lastVisit: r.lastVisit ?? null }));
+  // 프랜차이즈 판별: 1차로 첫 토큰 브랜드 집계 → 2개 이상인 브랜드를 "체인 stem" 으로,
+  // 띄어쓰기 없이 붙은 지점명("더클라임강남")도 그 stem 으로 흡수해서 같은 체인으로 묶음.
+  const brand = useMemo(() => {
+    const raw = new Map<string, number>();
+    for (const r of crewGyms) { const b = brandOf(r.name); raw.set(b, (raw.get(b) ?? 0) + 1); }
+    const stems = [...raw.entries()].filter(([, n]) => n >= 2).map(([b]) => b.replace(/\s/g, "")).filter((s) => s.length >= 2).sort((a, b) => b.length - a.length);
+    const of = (name: string) => { const r = (name || "").replace(/\s/g, ""); for (const s of stems) if (r.startsWith(s)) return s; for (const s of stems) if (s.length >= 3 && r.includes(s)) return s; return brandOf(name); };
+    const counts = new Map<string, number>();
+    for (const r of crewGyms) { const b = of(r.name); counts.set(b, (counts.get(b) ?? 0) + 1); }
+    return { of, counts };
+  }, [crewGyms]);
+  const brandColorOf = (name: string) => { const b = brand.of(name); return PIN_RGB[[...b].reduce((a, c) => a + c.charCodeAt(0), 0) % PIN_RGB.length]; };
   const visitLabel = (g: Any) => (!g.ever ? "아직 안 가봄" : g.due ? `간 지 ${g.weeks}주 · 또 갈 때` : g.weeks === 0 ? "이번 주 방문" : `${g.weeks}주 전 방문`);
   // 투표 암장 후보: 홈 암장 먼저(오래 안 간 곳 최우선), 나머지는 검색으로 추가
   const homeGymCandidates = gyms.filter((g) => g.isHome).sort((a, b) => { if (a.due !== b.due) return a.due ? -1 : 1; const aw = a.weeks == null ? Infinity : a.weeks; const bw = b.weeks == null ? Infinity : b.weeks; return bw - aw; });
   const otherGyms = gyms.filter((g) => !g.isHome);
   const exploreGyms = exploreQ.trim() ? gyms.filter((g) => (g.name + " " + g.loc).toLowerCase().includes(exploreQ.trim().toLowerCase())) : gyms;
+  // 지도 마커용(안정된 identity — crewGyms/검색어 바뀔 때만 재생성해서 188개 재구성 방지)
+  const mapGyms = useMemo(() => {
+    const q = exploreQ.trim().toLowerCase();
+    return crewGyms
+      .filter((r: Any) => r.lat != null && r.lng != null && (!q || (r.name + " " + (r.address || "")).toLowerCase().includes(q)))
+      .map((r: Any) => ({ id: r.id, name: r.name, lat: r.lat, lng: r.lng, due: !!r.dueForReset, color: brandColorOf(r.name) }));
+  }, [crewGyms, exploreQ]); // eslint-disable-line react-hooks/exhaustive-deps
+  const mapSelGym = mapSel ? gyms.find((g) => g.id === mapSel) : null;
+  const mapSelBrand = mapSelGym ? brandOf(mapSelGym.name) : "";
+  const mapSelBranches = mapSelGym ? brand.counts.get(brand.of(mapSelGym.name)) ?? 1 : 0;
   const selectedOtherGyms = otherGyms.filter((g) => pollGymIds.includes(g.id));
   const searchedGyms = gymSearch.trim() ? otherGyms.filter((g) => !pollGymIds.includes(g.id) && g.name.includes(gymSearch.trim())) : [];
   const gymById = (id: string | null) => gyms.find((g) => g.id === id) || null;
@@ -484,7 +519,7 @@ export default function ClimbCrewApp() {
   // 하단 액션바 — 절대위치 대신 플렉스 흐름으로(콘텐츠 아래 고정, 어떤 화면 높이에서도 안 겹침)
   let bottomBar: ReactNode = null;
   if (is("createPoll")) bottomBar = <button onClick={createPoll} style={{ width: "100%", height: 52, fontSize: 18, fontWeight: 700, ...crayonBtn(CRAYON.red, 0) }}>투표 만들기</button>;
-  else if (is("crewManage")) bottomBar = <button onClick={saveHomeGyms} style={{ width: "100%", height: 52, fontSize: 18, fontWeight: 700, ...crayonBtn(CRAYON.red, 0) }}>저장</button>;
+  else if (is("crewManage")) bottomBar = <button onClick={saveHomeGyms} style={{ width: "100%", height: 52, fontSize: 18, fontWeight: 700, ...crayonBtn(CRAYON.red, 0) }}>홈 암장 저장</button>;
   else if (is("record")) bottomBar = <button onClick={saveRecord} style={{ width: "100%", height: 52, fontSize: 18, fontWeight: 700, ...crayonBtn(CRAYON.red, 0) }}>완등 기록 저장</button>;
   else if (is("probDetail") && pd) bottomBar = <button onClick={() => tab("record")} style={{ width: "100%", height: 52, fontSize: 18, fontWeight: 700, ...crayonBtn(CRAYON.red, 0) }}>내 기록 남기기</button>;
   else if (is("gymDetail") && sg) bottomBar = (<div style={{ display: "flex", gap: 10 }}><button onClick={recordVisit} style={{ flex: 1, height: 50, border: `2px solid ${INK}`, borderRadius: WOBS[1], background: "#FFFEFA", fontSize: 17, fontWeight: 700, cursor: "pointer" }}>방문 기록</button><button onClick={openReviewSheet} style={{ flex: 1.5, height: 50, fontSize: 17, fontWeight: 700, ...crayonBtn(CRAYON.red, 2) }}>리뷰 쓰기</button></div>);
@@ -597,7 +632,10 @@ export default function ClimbCrewApp() {
                   <div style={{ fontSize: 20, fontWeight: 700 }}>{ac?.name ?? "…"}</div>
                   <svg width="12" height="12" viewBox="0 0 12 12" style={{ marginTop: 2 }}><path d="M2 4.5 6 8.5 10 4.5" stroke="#78756B" strokeWidth="1.8" fill="none" strokeLinecap="round" strokeLinejoin="round" /></svg>
                 </div>
-                <div style={{ position: "relative", width: 40, height: 40, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}><svg width="22" height="22" viewBox="0 0 24 24" fill="none"><path d="M6 9a6 6 0 1 1 12 0c0 5 2 6 2 6H4s2-1 2-6Z" stroke="#3A3633" strokeWidth="1.8" strokeLinejoin="round" /><path d="M10 20a2 2 0 0 0 4 0" stroke="#3A3633" strokeWidth="1.8" strokeLinecap="round" /></svg><div style={{ position: "absolute", top: 8, right: 9, width: 8, height: 8, borderRadius: 999, background: "#E24D3A", border: "1.5px solid #FFFDF6" }} /></div>
+                <div style={{ display: "flex", alignItems: "center", gap: 2 }}>
+                  <div onClick={openCrewManage} aria-label="크루 관리" style={{ width: 40, height: 40, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}><svg width="22" height="22" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="3.2" stroke="#3A3633" strokeWidth="1.8" /><path d="M12 3v2.2M12 18.8V21M3 12h2.2M18.8 12H21M5.8 5.8l1.6 1.6M16.6 16.6 18.2 18.2M18.2 5.8 16.6 7.4M7.4 16.6 5.8 18.2" stroke="#3A3633" strokeWidth="1.8" strokeLinecap="round" /></svg></div>
+                  <div style={{ position: "relative", width: 40, height: 40, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}><svg width="22" height="22" viewBox="0 0 24 24" fill="none"><path d="M6 9a6 6 0 1 1 12 0c0 5 2 6 2 6H4s2-1 2-6Z" stroke="#3A3633" strokeWidth="1.8" strokeLinejoin="round" /><path d="M10 20a2 2 0 0 0 4 0" stroke="#3A3633" strokeWidth="1.8" strokeLinecap="round" /></svg><div style={{ position: "absolute", top: 8, right: 9, width: 8, height: 8, borderRadius: 999, background: "#E24D3A", border: "1.5px solid #FFFDF6" }} /></div>
+                </div>
               </div>
 
               <div style={{ padding: "14px 16px 0" }}>
@@ -660,21 +698,38 @@ export default function ClimbCrewApp() {
           )}
 
           {is("explore") && (
-            <div style={{ animation: "ccfade .3s ease", paddingBottom: 96 }}>
-              <div style={{ padding: "56px 16px 8px" }}><div style={H1}>탐색</div></div>
-              <div style={{ padding: "8px 16px 0" }}><div style={{ display: "flex", alignItems: "center", gap: 8, height: 46, padding: "0 14px", background: "#F3EEDF", borderRadius: 12 }}><svg width="18" height="18" viewBox="0 0 20 20" fill="none"><circle cx="9" cy="9" r="6.2" stroke="#78756B" strokeWidth="1.8" /><path d="M14 14l4 4" stroke="#78756B" strokeWidth="1.8" strokeLinecap="round" /></svg><input value={exploreQ} onChange={(e) => setExploreQ(e.target.value)} placeholder="암장 이름 · 지역 검색" style={{ flex: 1, border: "none", background: "transparent", outline: "none", fontSize: 15 }} />{exploreQ && <div onClick={() => setExploreQ("")} style={{ cursor: "pointer", padding: 4 }}><svg width="14" height="14" viewBox="0 0 14 14"><path d="M2 2l10 10M12 2 2 12" stroke="#78756B" strokeWidth="2" strokeLinecap="round" /></svg></div>}</div></div>
-              <div style={{ padding: "18px 16px 0" }}>
-                <div style={{ ...sectionLabel, marginBottom: 10 }}>{exploreQ.trim() ? `검색 결과 ${exploreGyms.length}곳` : "우리 지역 암장"}</div>
-                <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                  {exploreGyms.length === 0 && <div style={{ padding: 16, ...cardStyle, color: "#78756B", fontSize: 14 }}>'{exploreQ.trim()}'에 맞는 암장이 없어요.</div>}
-                  {exploreGyms.map((gg) => (
-                    <div key={gg.id} onClick={() => openGym(gg.id)} style={{ display: "flex", alignItems: "center", gap: 12, padding: 14, ...cardStyle, cursor: "pointer" }}>
-                      <div style={avatarStyle(gg.color)}>{gg.name[0]}</div>
-                      <div style={{ flex: 1, minWidth: 0 }}><div style={{ fontSize: 15, fontWeight: 700 }}>{gg.name}</div><div style={{ fontSize: 12, color: "#78756B", marginTop: 2 }}>{gg.loc}{gg.rating ? ` · ★ ${gg.rating} (${gg.reviews})` : ""}</div><div style={{ display: "inline-flex", alignItems: "center", marginTop: 8, padding: "3px 8px", borderRadius: 999, fontSize: 11, fontWeight: 700, background: gg.due ? "#FBEFD9" : "#E4F5EC", color: gg.due ? "#B5730A" : "#3E7D2E" }}>{visitLabel(gg)}</div></div>
-                      <ChevR />
-                    </div>
-                  ))}
+            <div style={{ animation: "ccfade .3s ease", height: "100%", display: "flex", flexDirection: "column" }}>
+              <div style={{ padding: "52px 14px 10px", display: "flex", alignItems: "center", gap: 10, flexShrink: 0 }}>
+                <div style={{ fontSize: 24, fontWeight: 700, flexShrink: 0 }}>탐색</div>
+                <div style={{ flex: 1, display: "flex", alignItems: "center", gap: 8, height: 44, padding: "0 14px", background: "#FFFEFA", border: `2px solid ${INK}`, borderRadius: WOBS[2] }}>
+                  <svg width="17" height="17" viewBox="0 0 20 20" fill="none"><circle cx="9" cy="9" r="6.2" stroke="#78756B" strokeWidth="1.8" /><path d="M14 14l4 4" stroke="#78756B" strokeWidth="1.8" strokeLinecap="round" /></svg>
+                  <input value={exploreQ} onChange={(e) => { setExploreQ(e.target.value); setMapSel(null); }} placeholder="암장 · 지역 검색" style={{ flex: 1, border: "none", background: "transparent", outline: "none", fontSize: 15, minWidth: 0 }} />
+                  {exploreQ && <div onClick={() => { setExploreQ(""); setMapSel(null); }} style={{ cursor: "pointer", padding: 4 }}><svg width="14" height="14" viewBox="0 0 14 14"><path d="M2 2l10 10M12 2 2 12" stroke="#78756B" strokeWidth="2" strokeLinecap="round" /></svg></div>}
                 </div>
+              </div>
+              <div style={{ flex: 1, position: "relative", margin: "0 12px 12px", ...wob(0), overflow: "hidden", minHeight: 0 }}>
+                <GymMap gyms={mapGyms} selectedId={mapSel} onSelect={(id) => setMapSel(id || null)} />
+                {exploreQ.trim() && mapGyms.length === 0 && (
+                  <div style={{ position: "absolute", top: 14, left: 14, right: 14, padding: "10px 14px", background: "#FFFEFA", border: `2px solid ${INK}`, borderRadius: WOBS[1], fontSize: 14, color: "#6E675C", textAlign: "center" }}>&apos;{exploreQ.trim()}&apos; 에 맞는 암장이 없어요</div>
+                )}
+                {mapSelGym && (
+                  <div style={{ position: "absolute", left: 12, right: 12, bottom: 12, padding: "13px 14px", background: "#FFFEFA", border: `2.5px solid ${INK}`, borderRadius: WOBS[0], boxShadow: "0 6px 18px rgba(58,54,51,0.22)", animation: "ccfade .18s ease" }}>
+                    <div style={{ display: "flex", alignItems: "flex-start", gap: 12 }}>
+                      <div style={avatarStyle(mapSelGym.color)}>{mapSelGym.name[0]}</div>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        {mapSelBranches >= 2 && <div style={{ display: "inline-flex", alignItems: "center", gap: 5, marginBottom: 4, padding: "1px 8px 1px 6px", borderRadius: 999, background: `rgba(${brandColorOf(mapSelGym.name)},0.18)`, fontSize: 12, fontWeight: 700, color: INK }}><span style={{ width: 10, height: 10, borderRadius: "60% 45% 55% 50%", background: hatch(brandColorOf(mapSelGym.name)) }} />{mapSelBrand} · {mapSelBranches}개 지점</div>}
+                        <div style={{ fontSize: 17, fontWeight: 700, lineHeight: 1.15 }}>{mapSelGym.name}</div>
+                        <div style={{ fontSize: 13, color: "#78756B", marginTop: 2 }}>{mapSelGym.loc}{mapSelGym.rating ? ` · ★ ${mapSelGym.rating}` : ""}</div>
+                        <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
+                          <div style={{ display: "inline-flex", alignItems: "center", padding: "3px 9px", borderRadius: 999, fontSize: 12, fontWeight: 700, background: mapSelGym.due ? "#FBEFD9" : "#E4F5EC", color: mapSelGym.due ? "#B5730A" : "#3E7D2E" }}>{visitLabel(mapSelGym)}</div>
+                          <div style={{ fontSize: 12, fontWeight: 700, color: "#78756B" }}>{mapSelGym.lastVisit ? `마지막 방문 ${fmtDate(mapSelGym.lastVisit)}` : "우리 크루 방문 기록 없음"}</div>
+                        </div>
+                      </div>
+                      <div onClick={() => setMapSel(null)} style={{ cursor: "pointer", padding: 4, flexShrink: 0 }}><svg width="16" height="16" viewBox="0 0 14 14"><path d="M2 2l10 10M12 2 2 12" stroke="#78756B" strokeWidth="2" strokeLinecap="round" /></svg></div>
+                    </div>
+                    <button onClick={() => openGym(mapSelGym.id)} style={{ width: "100%", height: 44, marginTop: 12, fontSize: 16, fontWeight: 700, ...crayonBtn(CRAYON.red, 1) }}>상세 보기</button>
+                  </div>
+                )}
               </div>
             </div>
           )}
@@ -743,6 +798,7 @@ export default function ClimbCrewApp() {
                     <div style={{ display: "flex", alignItems: "center", gap: 10 }}><div style={{ width: 36, height: 36, borderRadius: "56% 44% 52% 48% / 48% 52% 44% 56%", flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 700, fontSize: 18, color: "#fff", border: `2px solid ${INK}`, background: hatch(sg.due ? CRAYON.orange : CRAYON.green), transform: "rotate(-3deg)" }}>{sg.due ? "!" : "✓"}</div><div><div style={{ fontSize: 15, fontWeight: 700, color: sg.due ? "#B5730A" : "#3E7D2E" }}>{!sg.ever ? "아직 안 가봤어요" : sg.due ? "또 갈 때가 됐어요" : "최근 다녀왔어요"}</div><div style={{ fontSize: 12, color: "#78756B", marginTop: 2 }}>{!sg.ever ? `보통 ${sg.cycle}주 주기예요` : `${sg.weeks}주 전 방문 · 보통 ${sg.cycle}주 주기`}</div></div></div>
                   </div>
                 </div>
+                <div style={{ padding: "14px 16px 0" }}><a href={`https://map.naver.com/p/search/${encodeURIComponent((sg.name || "") + " " + (sg.loc || ""))}`} target="_blank" rel="noreferrer" style={{ display: "flex", alignItems: "center", gap: 10, padding: 14, ...cardStyle, borderRadius: WOBS[3], textDecoration: "none", color: "#3A3633" }}><div style={{ width: 34, height: 34, borderRadius: 9, background: "#03C75A", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800, fontSize: 17, color: "#fff", fontFamily: "sans-serif" }}>N</div><div style={{ flex: 1 }}><div style={{ fontSize: 14, fontWeight: 600 }}>네이버 지도에서 보기</div><div style={{ fontSize: 12, color: "#78756B" }}>길찾기 · 위치 · 영업시간</div></div><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M7 17 17 7M9 7h8v8" stroke="#78756B" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /></svg></a></div>
                 {sg.instagram && (
                   <div style={{ padding: "14px 16px 0" }}><a href={sg.instagram} target="_blank" rel="noreferrer" style={{ display: "flex", alignItems: "center", gap: 10, padding: 14, ...cardStyle, borderRadius: WOBS[2], textDecoration: "none", color: "#3A3633" }}><div style={{ width: 34, height: 34, borderRadius: 9, background: "linear-gradient(135deg,#F58529,#DD2A7B)", display: "flex", alignItems: "center", justifyContent: "center" }}><svg width="18" height="18" viewBox="0 0 24 24" fill="none"><rect x="3.5" y="3.5" width="17" height="17" rx="5" stroke="#fff" strokeWidth="1.8" /><circle cx="12" cy="12" r="4" stroke="#fff" strokeWidth="1.8" /><circle cx="17" cy="7" r="1.2" fill="#fff" /></svg></div><div style={{ flex: 1 }}><div style={{ fontSize: 14, fontWeight: 600 }}>인스타 뉴셋 공지 보기</div><div style={{ fontSize: 12, color: "#78756B" }}>{handleOf(sg.instagram) || "인스타그램 열기"}</div></div><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M7 17 17 7M9 7h8v8" stroke="#78756B" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /></svg></a></div>
                 )}
@@ -807,28 +863,84 @@ export default function ClimbCrewApp() {
               <div style={{ padding: "24px 16px 0" }}><div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}><div style={sectionLabel}>내 완등 로그</div><div style={{ fontSize: 11, fontWeight: 700, color: "#78756B", background: "#F3EEDF", padding: "3px 9px", borderRadius: 999 }}>준비 중</div></div><div style={{ padding: 14, ...cardStyle, color: "#78756B", fontSize: 13 }}>완등 기록 기능은 준비 중이에요.</div></div>
               <div style={{ padding: "22px 16px 0" }}><div style={{ ...cardStyle, overflow: "hidden" }}>
                 <div onClick={() => showToast("알림 설정은 준비 중이에요")} style={{ display: "flex", alignItems: "center", gap: 8, padding: "15px 16px", borderBottom: "2px dashed rgba(58,54,51,0.2)", cursor: "pointer" }}><div style={{ flex: 1, fontSize: 15, color: "#78756B" }}>알림 설정</div><div style={{ fontSize: 11, fontWeight: 700, color: "#78756B", background: "#F3EEDF", padding: "3px 9px", borderRadius: 999 }}>준비 중</div></div>
-                <div onClick={openCrewManage} style={{ display: "flex", alignItems: "center", padding: "15px 16px", borderBottom: "2px dashed rgba(58,54,51,0.2)", cursor: "pointer" }}><div style={{ flex: 1, fontSize: 15 }}>크루 관리 · 홈 암장</div><ChevR /></div>
-                <div onClick={() => go("invite")} style={{ display: "flex", alignItems: "center", padding: "15px 16px", borderBottom: "2px dashed rgba(58,54,51,0.2)", cursor: "pointer" }}><div style={{ flex: 1, fontSize: 15 }}>초대 코드 · 멤버</div><ChevR /></div>
+                <div onClick={openCrewManage} style={{ display: "flex", alignItems: "center", gap: 8, padding: "15px 16px", borderBottom: "2px dashed rgba(58,54,51,0.2)", cursor: "pointer" }}><svg width="19" height="19" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="3" stroke={INK} strokeWidth="1.8" /><path d="M12 3.5v2M12 18.5v2M3.5 12h2M18.5 12h2M6 6l1.4 1.4M16.6 16.6 18 18M18 6l-1.4 1.4M7.4 16.6 6 18" stroke={INK} strokeWidth="1.8" strokeLinecap="round" /></svg><div style={{ flex: 1, fontSize: 15, fontWeight: 700 }}>크루 관리</div><div style={{ fontSize: 12, color: "#78756B" }}>멤버 · 초대 · 홈 암장</div><ChevR /></div>
                 <div onClick={() => { if (status === "authenticated") signOut({ redirect: false }); tab("login"); }} style={{ display: "flex", alignItems: "center", padding: "15px 16px", cursor: "pointer" }}><div style={{ flex: 1, fontSize: 15, color: "#D14343" }}>로그아웃</div></div>
               </div></div>
             </div>
           )}
 
           {is("crewManage") && (
-            <div style={{ animation: "ccfade .3s ease", paddingBottom: 24 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "56px 12px 8px" }}><BackBtn onClick={back} /><div style={{ fontSize: 20, fontWeight: 700 }}>크루 관리</div></div>
-              <div style={{ padding: "12px 16px 0" }}>
-                <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 2 }}>홈 암장</div>
-                <div style={{ fontSize: 12, color: "#78756B", marginBottom: 12 }}>선택 {manageHomeIds.length}/4 · 투표 후보와 &quot;가야 할 암장&quot;에 떠요</div>
-                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                  {allGymsList.length === 0 && <div style={{ padding: 14, ...cardStyle, color: "#78756B", fontSize: 13 }}>암장을 불러오는 중이에요</div>}
-                  {allGymsList.map((g: Any) => { const sel = manageHomeIds.includes(g.id); return (
-                    <div key={g.id} onClick={() => toggleManageHome(g.id)} style={rowStyle(sel)}>
-                      <div style={boxStyle(sel)}>{sel ? "✓" : ""}</div>
-                      <div style={{ flex: 1, minWidth: 0 }}><div style={{ fontSize: 15, fontWeight: 600 }}>{g.name}</div><div style={{ fontSize: 12, color: "#78756B", marginTop: 2 }}>{g.address || ""}</div></div>
-                    </div>
-                  ); })}
+            <div style={{ animation: "ccfade .3s ease", paddingBottom: 100 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "56px 12px 4px" }}><BackBtn onClick={back} /><div><div style={{ fontSize: 20, fontWeight: 700, lineHeight: 1.1 }}>크루 관리</div><div style={{ fontSize: 13, color: "#78756B" }}>{ac?.name ?? ""}</div></div></div>
+
+              {/* 초대 코드 */}
+              <div style={{ padding: "18px 16px 0" }}>
+                <div style={{ ...sectionLabel, marginBottom: 8 }}>초대</div>
+                <div style={{ padding: 16, ...cardStyle, borderRadius: WOBS[0] }}>
+                  <div style={{ fontSize: 13, color: "#78756B" }}>초대 코드</div>
+                  <div style={{ fontSize: 24, fontWeight: 800, letterSpacing: "0.06em", marginTop: 2 }}>{crewDetail?.inviteCode ?? "…"}</div>
+                  <div style={{ display: "flex", gap: 8, marginTop: 14 }}>
+                    <button onClick={copyLink} style={{ flex: 1, height: 44, border: `2px solid ${INK}`, borderRadius: WOBS[2], background: "#FFFEFA", fontSize: 15, fontWeight: 700, cursor: "pointer" }}>링크 복사</button>
+                    <button onClick={shareInvite} style={{ flex: 1, height: 44, border: `2px solid ${INK}`, borderRadius: WOBS[1], background: "#FEE500", color: "#191600", fontSize: 15, fontWeight: 700, cursor: "pointer", transform: "rotate(-0.3deg)" }}>카톡 공유</button>
+                  </div>
                 </div>
+              </div>
+
+              {/* 멤버 + 가입 신청 */}
+              <div style={{ padding: "24px 16px 0" }}>
+                <div style={{ ...sectionLabel, marginBottom: 10 }}>멤버 {members.length}{requests.length > 0 ? ` · 신청 ${requests.length}` : ""}</div>
+                {requests.length > 0 && (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 10 }}>
+                    {requests.map((r) => (
+                      <div key={r.userId} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", borderRadius: WOBS[2], border: `2px solid ${INK}`, background: `rgba(${CRAYON.yellow},0.12)` }}>
+                        <div style={{ width: 36, height: 36, borderRadius: "56% 44% 52% 48%", background: "#EAE4D4", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 700, color: "#78756B" }}>{r.user.nickname[0]}</div>
+                        <div style={{ flex: 1, minWidth: 0 }}><div style={{ fontSize: 15, fontWeight: 700 }}>{r.user.nickname}</div><div style={{ fontSize: 12, color: "#78756B" }}>{rel(r.createdAt)} 신청</div></div>
+                        <button onClick={() => handleReq(r.userId, r.user.nickname, false)} style={{ height: 40, padding: "0 13px", border: `2px solid ${INK}`, borderRadius: WOBS[3], background: "#FFFEFA", color: "#78756B", fontSize: 14, fontWeight: 700, cursor: "pointer" }}>거절</button>
+                        <button onClick={() => handleReq(r.userId, r.user.nickname, true)} style={{ height: 40, padding: "0 15px", fontSize: 14, fontWeight: 700, ...crayonBtn(CRAYON.green, 0) }}>승인</button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                  {members.map((m: Any) => (
+                    <div key={m.name} style={{ display: "flex", alignItems: "center", gap: 12, padding: "11px 14px", ...cardStyle, borderRadius: WOBS[2] }}>
+                      <div style={{ width: 36, height: 36, borderRadius: "60% 45% 55% 50% / 50% 60% 45% 58%", border: `2px solid ${INK}`, display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 700, fontSize: 14, background: hatch(hexRgb(m.color)), color: "#fff" }}>{m.name[0]}</div>
+                      <div style={{ flex: 1, fontSize: 15, fontWeight: 700 }}>{m.name}</div>
+                      <div style={{ ...rolePal[m.role], fontSize: 12, fontWeight: 700, padding: "3px 9px", borderRadius: 999 }}>{m.role}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* 홈 암장 (검색으로 추가) */}
+              <div style={{ padding: "26px 16px 0" }}>
+                <div style={{ ...sectionLabel, marginBottom: 2 }}>홈 암장 · {manageHomeIds.length}/4</div>
+                <div style={{ fontSize: 13, color: "#78756B", marginBottom: 12 }}>자주 가는 곳. 투표 후보와 &quot;가야 할 암장&quot;에 떠요</div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 12 }}>
+                  {manageHomeIds.length === 0 && <div style={{ padding: 13, ...cardStyle, color: "#78756B", fontSize: 14, borderRadius: WOBS[2] }}>아직 없어요. 아래에서 검색해 추가하세요.</div>}
+                  {gyms.filter((g) => manageHomeIds.includes(g.id)).map((g) => (
+                    <div key={g.id} onClick={() => toggleManageHome(g.id)} style={{ display: "flex", alignItems: "center", gap: 12, padding: "11px 14px", borderRadius: WOBS[1], border: `2px solid ${INK}`, background: `rgba(${CRAYON.yellow},0.16)`, cursor: "pointer" }}>
+                      <div style={avatarStyle(g.color, 34)}>{g.name[0]}</div>
+                      <div style={{ flex: 1, minWidth: 0 }}><div style={{ fontSize: 15, fontWeight: 700 }}>{g.name}</div><div style={{ fontSize: 12, color: "#78756B", marginTop: 2 }}>{g.loc}</div></div>
+                      <svg width="18" height="18" viewBox="0 0 14 14"><path d="M2 2l10 10M12 2 2 12" stroke="#78756B" strokeWidth="2" strokeLinecap="round" /></svg>
+                    </div>
+                  ))}
+                </div>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, height: 46, padding: "0 14px", background: "#FFFEFA", border: `2px solid ${INK}`, borderRadius: WOBS[2] }}>
+                  <svg width="17" height="17" viewBox="0 0 20 20" fill="none"><circle cx="9" cy="9" r="6.2" stroke="#78756B" strokeWidth="1.8" /><path d="M14 14l4 4" stroke="#78756B" strokeWidth="1.8" strokeLinecap="round" /></svg>
+                  <input value={manageQ} onChange={(e) => setManageQ(e.target.value)} placeholder="암장 검색해서 홈으로 추가" style={{ flex: 1, border: "none", background: "transparent", outline: "none", fontSize: 15, minWidth: 0 }} />
+                  {manageQ && <div onClick={() => setManageQ("")} style={{ cursor: "pointer", padding: 4 }}><svg width="14" height="14" viewBox="0 0 14 14"><path d="M2 2l10 10M12 2 2 12" stroke="#78756B" strokeWidth="2" strokeLinecap="round" /></svg></div>}
+                </div>
+                {manageQ.trim() && (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 10 }}>
+                    {gyms.filter((g) => !manageHomeIds.includes(g.id) && (g.name + " " + g.loc).toLowerCase().includes(manageQ.trim().toLowerCase())).slice(0, 20).map((g) => (
+                      <div key={g.id} onClick={() => { toggleManageHome(g.id); }} style={{ display: "flex", alignItems: "center", gap: 12, padding: "11px 14px", ...cardStyle, borderRadius: WOBS[2], cursor: "pointer" }}>
+                        <div style={{ width: 30, height: 30, borderRadius: "56% 44% 52% 48%", background: "#EFEBDD", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}><svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M12 5v14M5 12h14" stroke="#78756B" strokeWidth="2.4" strokeLinecap="round" /></svg></div>
+                        <div style={{ flex: 1, minWidth: 0 }}><div style={{ fontSize: 15, fontWeight: 600 }}>{g.name}</div><div style={{ fontSize: 12, color: "#78756B", marginTop: 2 }}>{g.loc}</div></div>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
           )}

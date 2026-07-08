@@ -120,6 +120,8 @@ model Gym {
   resetCycleWeeks Int      @default(4)
   gradeSystem     String?
   instagram       String?
+  phone           String?
+  kakaoPlaceId    String?  @unique
   createdAt       DateTime @default(now())
 
   settings        GymSetting[]
