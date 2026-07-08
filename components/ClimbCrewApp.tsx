@@ -302,7 +302,7 @@ export default function ClimbCrewApp() {
   const joinByCode = async () => { if (!joinCode.trim()) { showToast("초대 코드를 입력해주세요"); return; } try { const r: Any = await api.post("/api/crews/join", { inviteCode: joinCode }); const cs: Any = await api.crews(); setCrews(cs); setActiveCrewId(r.crewId); tab("home"); showToast("크루에 참여했어요"); } catch (e: Any) { showToast(e.message); } };
   const handleReq = async (userId: string, name: string, ok: boolean) => { try { await api.patch(`/api/crews/${activeCrewId}/requests/${userId}`, { action: ok ? "approve" : "reject" }); showToast(ok ? `${name}님을 승인했어요` : `${name}님 신청을 거절했어요`); if (activeCrewId) reloadCrew(activeCrewId); } catch (e: Any) { showToast(e.message); } };
   const switchCrew = (id: string) => { const c = crews.find((x) => x.id === id); setActiveCrewId(id); setSwitcherOpen(false); tab("home"); showToast(`${c?.name ?? ""}(으)로 전환했어요`); };
-  const submitVote = async () => { if (!openPoll) return; const dIds = Object.keys(voteDates).filter((k) => voteDates[k]); const gIds = Object.keys(voteGyms).filter((k) => voteGyms[k]); if (dIds.length + gIds.length === 0) { showToast("하나 이상 선택해주세요"); return; } try { await api.post(`/api/polls/${openPoll.id}/responses`, { dateOptionIds: dIds, gymOptionIds: gIds }); setVoteSubmitted(true); showToast("응답을 제출했어요"); if (activeCrewId) api.crewPolls(activeCrewId).then(setPolls); api.poll(openPoll.id).then((p: Any) => setPolls((prev) => prev.map((x) => (x.id === p.id ? { ...x, ...p } : x)))); } catch (e: Any) { showToast(e.message); } };
+  const submitVote = async () => { if (!openPoll) return; const dIds = Object.keys(voteDates).filter((k) => voteDates[k]); const gIds = Object.keys(voteGyms).filter((k) => voteGyms[k]); try { await api.post(`/api/polls/${openPoll.id}/responses`, { dateOptionIds: dIds, gymOptionIds: gIds }); setVoteSubmitted(true); showToast(dIds.length ? "응답을 제출했어요" : "다 가능으로 제출했어요"); if (activeCrewId) api.crewPolls(activeCrewId).then(setPolls); api.poll(openPoll.id).then((p: Any) => setPolls((prev) => prev.map((x) => (x.id === p.id ? { ...x, ...p } : x)))); } catch (e: Any) { showToast(e.message); } };
   const inviteLink = () => `${window.location.origin}/?invite=${crewDetail?.inviteCode ?? ""}`;
   const inviteText = () => `NewSetter · '${crewDetail?.name ?? "우리 크루"}' 크루에 초대합니다!\n초대 코드: ${crewDetail?.inviteCode ?? ""}`;
   const copyLink = async () => { try { await navigator.clipboard.writeText(`${inviteText()}\n${inviteLink()}`); showToast("초대 링크를 복사했어요"); } catch { showToast("복사에 실패했어요"); } };
@@ -544,15 +544,16 @@ export default function ClimbCrewApp() {
                 if (!opt) return <div key={d} style={{ height: 48, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 15, color: "#CDC6B5" }}>{d}</div>;
                 const mine = !!voteDates[opt.id];
                 const heat = opt.count / respMaxCount;
-                // 겹침 = 크레파스 빗금(빽빽할수록 많이 겹침) / 내 선택 = 손으로 친 동그라미 — 채널 분리라 둘 다 동시에 보임
+                // 불가 겹침 = 빨강 빗금(빽빽할수록 많이 안 됨) / 내 선택(불가) = 손으로 친 X — 채널 분리라 둘 다 동시에 보임
+                // count = 안 되는(불가) 사람 수 → 빽빽한 빨강 빗금일수록 이 날 피해야 함
                 const bg = opt.count > 0
-                  ? `repeating-linear-gradient(52deg, rgba(${CRAYON.orange},${0.35 + heat * 0.5}) 0 2.5px, rgba(${CRAYON.orange},${0.1 + heat * 0.25}) 2.5px 5px, transparent 5px ${7.5 - heat * 1.5}px)`
+                  ? `repeating-linear-gradient(52deg, rgba(${CRAYON.red},${0.32 + heat * 0.5}) 0 2.5px, rgba(${CRAYON.red},${0.1 + heat * 0.22}) 2.5px 5px, transparent 5px ${7.5 - heat * 1.5}px)`
                   : "#FFFEFA";
                 return (
                   <div key={d} onClick={() => { setVoteDates((v) => ({ ...v, [opt.id]: !v[opt.id] })); setFocusDay(k); }} style={{ position: "relative", height: 48, borderRadius: 10, cursor: "pointer", background: bg, border: "2px dashed rgba(58,54,51,0.28)", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center" }}>
                     <div style={{ fontSize: 16, fontWeight: 700, color: "#3A3633", lineHeight: 1 }}>{d}</div>
-                    {opt.count > 0 && <div style={{ fontSize: 11, fontWeight: 700, color: "#A8452C", marginTop: 1, lineHeight: 1 }}>{opt.count}명</div>}
-                    {mine && <svg viewBox="0 0 40 44" style={{ position: "absolute", inset: -4, width: "calc(100% + 8px)", height: "calc(100% + 8px)", pointerEvents: "none" }}><path d="M20 3.5 C32 1.5 38.5 11 37.5 22 C36.5 34 28 41.5 17.5 40.5 C7.5 39.5 2 30 3.5 19.5 C5 10 11 4.5 23 3.8" fill="none" stroke="#3A3633" strokeWidth="2.6" strokeLinecap="round" /></svg>}
+                    {opt.count > 0 && <div style={{ fontSize: 11, fontWeight: 700, color: "#B4432E", marginTop: 1, lineHeight: 1 }}>{opt.count}명 ✕</div>}
+                    {mine && <svg viewBox="0 0 40 44" style={{ position: "absolute", inset: -4, width: "calc(100% + 8px)", height: "calc(100% + 8px)", pointerEvents: "none" }}><path d="M9 9 C18 17 24 27 32 37 M31 9 C22 18 16 27 8 37" fill="none" stroke="#C23A24" strokeWidth="3" strokeLinecap="round" /></svg>}
                   </div>
                 );
               })}
@@ -834,19 +835,19 @@ export default function ClimbCrewApp() {
                   )}
                   {(!hasGymOpts || voteTab === "date") && (
                     <div style={{ padding: "18px 16px 0" }}>
-                      <div style={{ fontSize: 17, fontWeight: 700, marginBottom: 2 }}>되는 날에 동그라미 쳐주세요</div>
-                      <div style={{ fontSize: 14, color: "#514C44", marginBottom: 16 }}>여러 날도 좋아요 · 누르면 아래에 누가 되는지 나와요</div>
+                      <div style={{ fontSize: 17, fontWeight: 700, marginBottom: 2 }}>안 되는 날에 X 쳐주세요</div>
+                      <div style={{ fontSize: 14, color: "#514C44", marginBottom: 16 }}>못 가는 날만 표시 · 다 되면 안 골라도 돼요 · 누르면 누가 안 되는지 나와요</div>
                       {respMonths.length === 0 ? <div style={{ color: "#514C44", fontSize: 15 }}>날짜 후보가 없어요.</div> : respondCalendar()}
                       {respMonths.length > 0 && (
                         <div style={{ display: "flex", alignItems: "center", gap: 16, marginTop: 12, fontSize: 13, fontWeight: 700, color: "#443F38", flexWrap: "wrap" }}>
-                          <div style={{ display: "flex", alignItems: "center", gap: 6 }}><svg width="17" height="17" viewBox="0 0 40 44"><path d="M20 3.5 C32 1.5 38.5 11 37.5 22 C36.5 34 28 41.5 17.5 40.5 C7.5 39.5 2 30 3.5 19.5 C5 10 11 4.5 23 3.8" fill="none" stroke="#3A3633" strokeWidth="3.4" strokeLinecap="round" /></svg>내가 고른 날</div>
-                          <div style={{ display: "flex", alignItems: "center", gap: 6 }}><span style={{ width: 15, height: 15, borderRadius: 6, background: `repeating-linear-gradient(52deg, rgba(${CRAYON.orange},0.8) 0 2.5px, rgba(${CRAYON.orange},0.3) 2.5px 5px, transparent 5px 6.5px)`, display: "inline-block" }} />빽빽할수록 많이 겹쳐요</div>
+                          <div style={{ display: "flex", alignItems: "center", gap: 6 }}><svg width="17" height="17" viewBox="0 0 40 44"><path d="M9 9 C18 17 24 27 32 37 M31 9 C22 18 16 27 8 37" fill="none" stroke="#C23A24" strokeWidth="3.4" strokeLinecap="round" /></svg>내가 안 되는 날</div>
+                          <div style={{ display: "flex", alignItems: "center", gap: 6 }}><span style={{ width: 15, height: 15, borderRadius: 6, background: `repeating-linear-gradient(52deg, rgba(${CRAYON.red},0.8) 0 2.5px, rgba(${CRAYON.red},0.3) 2.5px 5px, transparent 5px 6.5px)`, display: "inline-block" }} />빽빽할수록 많이 안 돼요</div>
                         </div>
                       )}
                       {focusDay && respOptByDay.get(focusDay) && (
                         <div style={{ marginTop: 16, padding: 14, ...cardStyle, borderRadius: WOBS[3] }}>
-                          <div style={{ fontSize: 13, fontWeight: 700, marginBottom: respOptByDay.get(focusDay)!.voters.length ? 8 : 0 }}>{fmtDate(focusDay)} · {respOptByDay.get(focusDay)!.count}명 가능</div>
-                          {respOptByDay.get(focusDay)!.voters.length ? voterRow(respOptByDay.get(focusDay)!.voters) : <div style={{ fontSize: 12, color: "#514C44" }}>아직 아무도 안 골랐어요 · 먼저 골라보세요</div>}
+                          <div style={{ fontSize: 13, fontWeight: 700, marginBottom: respOptByDay.get(focusDay)!.voters.length ? 8 : 0 }}>{fmtDate(focusDay)} · {respOptByDay.get(focusDay)!.count}명 안 됨</div>
+                          {respOptByDay.get(focusDay)!.voters.length ? voterRow(respOptByDay.get(focusDay)!.voters) : <div style={{ fontSize: 12, color: "#3E7D2E" }}>이 날은 다들 돼요 👍</div>}
                         </div>
                       )}
                     </div>

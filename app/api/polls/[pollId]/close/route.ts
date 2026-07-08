@@ -28,9 +28,9 @@ export async function POST(_req: Request, { params }: { params: Promise<{ pollId
     return error("날짜 후보가 없어 확정할 수 없습니다", 422);
   }
 
-  // 날짜: 최다 득표, 동점이면 이른 날짜
+  // 날짜: 표 = "안 되는(불가) 사람" 이므로 최소 득표(=가장 적게 불가한 날) 확정, 동점이면 이른 날짜
   const winnerDate = [...poll.dateOptions].sort((a, b) => {
-    const diff = b._count.votes - a._count.votes;
+    const diff = a._count.votes - b._count.votes;
     return diff !== 0 ? diff : a.date.getTime() - b.date.getTime();
   })[0];
 
