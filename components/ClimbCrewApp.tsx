@@ -141,6 +141,7 @@ export default function ClimbCrewApp() {
   const [closeSheetOpen, setCloseSheetOpen] = useState(false);
   const [allGymsList, setAllGymsList] = useState<Any[]>([]);
   const [crewHomeGymIds, setCrewHomeGymIds] = useState<string[]>([]);
+  const [createGymQ, setCreateGymQ] = useState("");
   const [manageHomeIds, setManageHomeIds] = useState<string[]>([]);
   const [manageQ, setManageQ] = useState("");
   const [homeEditOpen, setHomeEditOpen] = useState(false);
@@ -235,7 +236,7 @@ export default function ClimbCrewApp() {
   }, [screen, openPoll?.id]);
 
   /* ===== 액션 ===== */
-  const createCrew = async () => { if (!form.name.trim()) { showToast("크루 이름을 입력해주세요"); return; } try { const c: Any = await api.post("/api/crews", { name: form.name, description: form.bio, region: form.region, openChatUrl: form.kakao, homeGymIds: crewHomeGymIds }); const cs: Any = await api.crews(); setCrews(cs); setActiveCrewId(c.id); setCrewHomeGymIds([]); go("invite"); } catch (e: Any) { showToast(e.message); } };
+  const createCrew = async () => { if (!form.name.trim()) { showToast("크루 이름을 입력해주세요"); return; } try { const c: Any = await api.post("/api/crews", { name: form.name, description: form.bio, region: form.region, openChatUrl: form.kakao, homeGymIds: crewHomeGymIds }); const cs: Any = await api.crews(); setCrews(cs); setActiveCrewId(c.id); setCrewHomeGymIds([]); setCreateGymQ(""); go("invite"); } catch (e: Any) { showToast(e.message); } };
   const joinByCode = async () => { if (!joinCode.trim()) { showToast("초대 코드를 입력해주세요"); return; } try { const r: Any = await api.post("/api/crews/join", { inviteCode: joinCode }); const cs: Any = await api.crews(); setCrews(cs); setActiveCrewId(r.crewId); tab("home"); showToast("크루에 참여했어요"); } catch (e: Any) { showToast(e.message); } };
   const handleReq = async (userId: string, name: string, ok: boolean) => { try { await api.patch(`/api/crews/${activeCrewId}/requests/${userId}`, { action: ok ? "approve" : "reject" }); showToast(ok ? `${name}님을 승인했어요` : `${name}님 신청을 거절했어요`); if (activeCrewId) reloadCrew(activeCrewId); } catch (e: Any) { showToast(e.message); } };
   const switchCrew = (id: string) => { const c = crews.find((x) => x.id === id); setActiveCrewId(id); setSwitcherOpen(false); tab("home"); showToast(`${c?.name ?? ""}(으)로 전환했어요`); };
@@ -570,14 +571,21 @@ export default function ClimbCrewApp() {
               <div style={{ padding: "24px 16px 0" }}>
                 <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 2 }}>홈 암장 <span style={{ color: "#78756B", fontWeight: 400 }}>(자주 가는 곳, 최대 4곳)</span></div>
                 <div style={{ fontSize: 12, color: "#78756B", marginBottom: 10 }}>선택 {crewHomeGymIds.length}/4 · 투표할 때 후보로 먼저 떠요</div>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, height: 46, padding: "0 14px", background: "#fff", border: `2px solid ${INK}`, borderRadius: WOBS[2], marginBottom: 10 }}>
+                  <svg width="17" height="17" viewBox="0 0 20 20" fill="none"><circle cx="9" cy="9" r="6.2" stroke="#78756B" strokeWidth="1.8" /><path d="M14 14l4 4" stroke="#78756B" strokeWidth="1.8" strokeLinecap="round" /></svg>
+                  <input value={createGymQ} onChange={(e) => setCreateGymQ(e.target.value)} placeholder="암장 검색 (이름 · 지역)" style={{ flex: 1, border: "none", background: "transparent", outline: "none", fontSize: 15, minWidth: 0 }} />
+                  {createGymQ && <div onClick={() => setCreateGymQ("")} style={{ cursor: "pointer", padding: 4 }}><svg width="14" height="14" viewBox="0 0 14 14"><path d="M2 2l10 10M12 2 2 12" stroke="#78756B" strokeWidth="2" strokeLinecap="round" /></svg></div>}
+                </div>
                 <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                   {allGymsList.length === 0 && <div style={{ padding: 14, ...cardStyle, color: "#78756B", fontSize: 13 }}>암장을 불러오는 중이에요</div>}
-                  {allGymsList.map((g: Any) => { const sel = crewHomeGymIds.includes(g.id); return (
+                  {(createGymQ.trim() ? allGymsList.filter((g: Any) => (g.name + " " + (g.address || "")).toLowerCase().includes(createGymQ.trim().toLowerCase())) : allGymsList.filter((g: Any) => crewHomeGymIds.includes(g.id))).slice(0, 40).map((g: Any) => { const sel = crewHomeGymIds.includes(g.id); return (
                     <div key={g.id} onClick={() => toggleHomeGym(g.id)} style={rowStyle(sel)}>
                       <div style={boxStyle(sel)}>{sel ? "✓" : ""}</div>
                       <div style={{ flex: 1, minWidth: 0 }}><div style={{ fontSize: 15, fontWeight: 600 }}>{g.name}</div><div style={{ fontSize: 12, color: "#78756B", marginTop: 2 }}>{g.address || ""}</div></div>
                     </div>
                   ); })}
+                  {allGymsList.length > 0 && !createGymQ.trim() && crewHomeGymIds.length === 0 && <div style={{ padding: 14, color: "#78756B", fontSize: 14, textAlign: "center" }}>검색해서 홈 암장을 골라보세요</div>}
+                  {createGymQ.trim() && allGymsList.filter((g: Any) => (g.name + " " + (g.address || "")).toLowerCase().includes(createGymQ.trim().toLowerCase())).length === 0 && <div style={{ padding: 14, color: "#78756B", fontSize: 14, textAlign: "center" }}>검색 결과가 없어요</div>}
                 </div>
               </div>
               <div style={{ padding: "28px 16px 0" }}><button onClick={createCrew} style={{ width: "100%", height: 52, fontSize: 18, fontWeight: 700, ...crayonBtn(CRAYON.red, 0) }}>크루 만들기</button></div>
