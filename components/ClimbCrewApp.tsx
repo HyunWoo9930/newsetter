@@ -137,11 +137,13 @@ export default function ClimbCrewApp() {
   const [newLabel, setNewLabel] = useState("저녁");
   const [exploreQ, setExploreQ] = useState("");
   const [mapSel, setMapSel] = useState<string | null>(null);
+  const [brandFilter, setBrandFilter] = useState<string | null>(null);
   const [closeSheetOpen, setCloseSheetOpen] = useState(false);
   const [allGymsList, setAllGymsList] = useState<Any[]>([]);
   const [crewHomeGymIds, setCrewHomeGymIds] = useState<string[]>([]);
   const [manageHomeIds, setManageHomeIds] = useState<string[]>([]);
   const [manageQ, setManageQ] = useState("");
+  const [homeEditOpen, setHomeEditOpen] = useState(false);
   const [pickedDay, setPickedDay] = useState<string | null>(null);
   const [pollCalOffset, setPollCalOffset] = useState(0);
   const [gymSearch, setGymSearch] = useState("");
@@ -271,13 +273,14 @@ export default function ClimbCrewApp() {
     setCrewHomeGymIds((h) => (h.includes(id) ? h.filter((x) => x !== id) : h.length >= 4 ? h : [...h, id]));
   };
   const openCrewManage = () => { setManageHomeIds(crewGyms.filter((g) => g.isHome).map((g) => g.id)); setManageQ(""); if (activeCrewId) reloadCrew(activeCrewId); go("crewManage"); };
+  const openHomeEdit = () => { setManageHomeIds(crewGyms.filter((g) => g.isHome).map((g) => g.id)); setManageQ(""); setHomeEditOpen(true); };
   const toggleManageHome = (id: string) => {
     if (!manageHomeIds.includes(id) && manageHomeIds.length >= 4) showToast("홈 암장은 최대 4곳이에요");
     setManageHomeIds((h) => (h.includes(id) ? h.filter((x) => x !== id) : h.length >= 4 ? h : [...h, id]));
   };
   const saveHomeGyms = async () => {
     if (!activeCrewId) return;
-    try { await api.put(`/api/crews/${activeCrewId}/home-gyms`, { gymIds: manageHomeIds }); api.crewGyms(activeCrewId).then(setCrewGyms); showToast("홈 암장을 저장했어요"); back(); } catch (e: Any) { showToast(e.message); }
+    try { await api.put(`/api/crews/${activeCrewId}/home-gyms`, { gymIds: manageHomeIds }); api.crewGyms(activeCrewId).then(setCrewGyms); showToast("홈 암장을 저장했어요"); setHomeEditOpen(false); } catch (e: Any) { showToast(e.message); }
   };
   const openReviewSheet = () => { setReviewRating(0); setReviewTags([]); setReviewText(""); setReviewSheetOpen(true); };
   const toggleReviewTag = (t: string) => setReviewTags((ts) => (ts.includes(t) ? ts.filter((x) => x !== t) : [...ts, t]));
@@ -337,16 +340,11 @@ export default function ClimbCrewApp() {
   const memberCount = ac?._count?.members ?? crewDetail?._count?.members ?? 0;
 
   const gyms = crewGyms.map((r, i) => ({ id: r.id, name: r.name, loc: r.address || "", lat: r.lat ?? null, lng: r.lng ?? null, rating: r.rating ?? 0, reviews: r.reviewCount ?? 0, weeks: r.weeksSinceVisit, ever: !!r.everVisited, due: !!r.dueForReset, cycle: r.resetCycleWeeks ?? 4, hasSet: !!r.latestSetting, isHome: !!r.isHome, color: PALETTE[i % PALETTE.length], settingId: r.latestSetting?.id ?? null, instagram: r.instagram, lastVisit: r.lastVisit ?? null }));
-  // 프랜차이즈 판별: 1차로 첫 토큰 브랜드 집계 → 2개 이상인 브랜드를 "체인 stem" 으로,
-  // 띄어쓰기 없이 붙은 지점명("더클라임강남")도 그 stem 으로 흡수해서 같은 체인으로 묶음.
+  // 프랜차이즈: 이름 첫 토큰을 브랜드로(정확 일치만 — 잘못 합치지 않게). 2개 이상이면 체인.
   const brand = useMemo(() => {
-    const raw = new Map<string, number>();
-    for (const r of crewGyms) { const b = brandOf(r.name); raw.set(b, (raw.get(b) ?? 0) + 1); }
-    const stems = [...raw.entries()].filter(([, n]) => n >= 2).map(([b]) => b.replace(/\s/g, "")).filter((s) => s.length >= 2).sort((a, b) => b.length - a.length);
-    const of = (name: string) => { const r = (name || "").replace(/\s/g, ""); for (const s of stems) if (r.startsWith(s)) return s; for (const s of stems) if (s.length >= 3 && r.includes(s)) return s; return brandOf(name); };
     const counts = new Map<string, number>();
-    for (const r of crewGyms) { const b = of(r.name); counts.set(b, (counts.get(b) ?? 0) + 1); }
-    return { of, counts };
+    for (const r of crewGyms) { const b = brandOf(r.name); counts.set(b, (counts.get(b) ?? 0) + 1); }
+    return { of: brandOf, counts };
   }, [crewGyms]);
   const brandColorOf = (name: string) => { const b = brand.of(name); return PIN_RGB[[...b].reduce((a, c) => a + c.charCodeAt(0), 0) % PIN_RGB.length]; };
   const visitLabel = (g: Any) => (!g.ever ? "아직 안 가봄" : g.due ? `간 지 ${g.weeks}주 · 또 갈 때` : g.weeks === 0 ? "이번 주 방문" : `${g.weeks}주 전 방문`);
@@ -358,9 +356,11 @@ export default function ClimbCrewApp() {
   const mapGyms = useMemo(() => {
     const q = exploreQ.trim().toLowerCase();
     return crewGyms
-      .filter((r: Any) => r.lat != null && r.lng != null && (!q || (r.name + " " + (r.address || "")).toLowerCase().includes(q)))
+      .filter((r: Any) => r.lat != null && r.lng != null && (!q || (r.name + " " + (r.address || "")).toLowerCase().includes(q)) && (!brandFilter || brand.of(r.name) === brandFilter))
       .map((r: Any) => ({ id: r.id, name: r.name, lat: r.lat, lng: r.lng, due: !!r.dueForReset, color: brandColorOf(r.name) }));
-  }, [crewGyms, exploreQ]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [crewGyms, exploreQ, brandFilter]); // eslint-disable-line react-hooks/exhaustive-deps
+  // 인기 프랜차이즈 칩 (지점 2개 이상, 지점 수 많은 순)
+  const topBrands = useMemo(() => [...brand.counts.entries()].filter(([, n]) => n >= 2).sort((a, b) => b[1] - a[1]).slice(0, 8), [brand]);
   const mapSelGym = mapSel ? gyms.find((g) => g.id === mapSel) : null;
   const mapSelBrand = mapSelGym ? brandOf(mapSelGym.name) : "";
   const mapSelBranches = mapSelGym ? brand.counts.get(brand.of(mapSelGym.name)) ?? 1 : 0;
@@ -372,7 +372,7 @@ export default function ClimbCrewApp() {
   const openVote = openPoll ? { id: openPoll.id, title: openPoll.title, deadline: fmtDeadline(openPoll.deadline), responded: openPoll.responderCount ?? 0, total: memberCount } : null;
   const respondedCount = (openVote?.responded ?? 0);
   const confirmedPoll = polls.find((p) => p.confirmedDate);
-  const canClose = !!(me && openPoll && (openPoll.creatorId === me.id || ac?.leaderId === me.id));
+  const canClose = !!(me && openPoll); // 일단은 모든 멤버가 마감 가능
   const upcoming = confirmedPoll ? { date: fmtDate(confirmedPoll.confirmedDate), gym: confirmedPoll.confirmedGymName || "", going: confirmedPoll.responderCount ?? 0 } : null;
 
   const adaptProb = (p: Any) => ({ id: p.id, color: p.color, tag: tagOf(p.label, p.color), feel: feelFromScore(p.difficultyScore), send: p.sendRate == null ? 0 : Math.round(p.sendRate * 100), honey: (p.honeyRatio ?? 0) > 0 || (p.honeyCount ?? 0) > 0, videos: p.videoCount ?? 0, mine: !!p.mySent, hex: HEX[p.color] || "#999" });
@@ -519,7 +519,6 @@ export default function ClimbCrewApp() {
   // 하단 액션바 — 절대위치 대신 플렉스 흐름으로(콘텐츠 아래 고정, 어떤 화면 높이에서도 안 겹침)
   let bottomBar: ReactNode = null;
   if (is("createPoll")) bottomBar = <button onClick={createPoll} style={{ width: "100%", height: 52, fontSize: 18, fontWeight: 700, ...crayonBtn(CRAYON.red, 0) }}>투표 만들기</button>;
-  else if (is("crewManage")) bottomBar = <button onClick={saveHomeGyms} style={{ width: "100%", height: 52, fontSize: 18, fontWeight: 700, ...crayonBtn(CRAYON.red, 0) }}>홈 암장 저장</button>;
   else if (is("record")) bottomBar = <button onClick={saveRecord} style={{ width: "100%", height: 52, fontSize: 18, fontWeight: 700, ...crayonBtn(CRAYON.red, 0) }}>완등 기록 저장</button>;
   else if (is("probDetail") && pd) bottomBar = <button onClick={() => tab("record")} style={{ width: "100%", height: 52, fontSize: 18, fontWeight: 700, ...crayonBtn(CRAYON.red, 0) }}>내 기록 남기기</button>;
   else if (is("gymDetail") && sg) bottomBar = (<div style={{ display: "flex", gap: 10 }}><button onClick={recordVisit} style={{ flex: 1, height: 50, border: `2px solid ${INK}`, borderRadius: WOBS[1], background: "#FFFEFA", fontSize: 17, fontWeight: 700, cursor: "pointer" }}>방문 기록</button><button onClick={openReviewSheet} style={{ flex: 1.5, height: 50, fontSize: 17, fontWeight: 700, ...crayonBtn(CRAYON.red, 2) }}>리뷰 쓰기</button></div>);
@@ -703,10 +702,20 @@ export default function ClimbCrewApp() {
                 <div style={{ fontSize: 24, fontWeight: 700, flexShrink: 0 }}>탐색</div>
                 <div style={{ flex: 1, display: "flex", alignItems: "center", gap: 8, height: 44, padding: "0 14px", background: "#FFFEFA", border: `2px solid ${INK}`, borderRadius: WOBS[2] }}>
                   <svg width="17" height="17" viewBox="0 0 20 20" fill="none"><circle cx="9" cy="9" r="6.2" stroke="#78756B" strokeWidth="1.8" /><path d="M14 14l4 4" stroke="#78756B" strokeWidth="1.8" strokeLinecap="round" /></svg>
-                  <input value={exploreQ} onChange={(e) => { setExploreQ(e.target.value); setMapSel(null); }} placeholder="암장 · 지역 검색" style={{ flex: 1, border: "none", background: "transparent", outline: "none", fontSize: 15, minWidth: 0 }} />
+                  <input value={exploreQ} onChange={(e) => { setExploreQ(e.target.value); setMapSel(null); setBrandFilter(null); }} placeholder="암장 · 지역 검색" style={{ flex: 1, border: "none", background: "transparent", outline: "none", fontSize: 15, minWidth: 0 }} />
                   {exploreQ && <div onClick={() => { setExploreQ(""); setMapSel(null); }} style={{ cursor: "pointer", padding: 4 }}><svg width="14" height="14" viewBox="0 0 14 14"><path d="M2 2l10 10M12 2 2 12" stroke="#78756B" strokeWidth="2" strokeLinecap="round" /></svg></div>}
                 </div>
               </div>
+              {topBrands.length > 0 && (
+                <div style={{ display: "flex", gap: 8, padding: "0 14px 10px", overflowX: "auto", flexShrink: 0 }}>
+                  <div onClick={() => setBrandFilter(null)} style={{ flexShrink: 0, display: "flex", alignItems: "center", padding: "5px 14px", borderRadius: WOBS[2], fontSize: 14, fontWeight: 700, cursor: "pointer", border: `2px solid ${INK}`, background: !brandFilter ? hatch("58,54,51") : "#FFFEFA", color: !brandFilter ? "#fff" : INK }}>전체</div>
+                  {topBrands.map(([b, n]) => { const on = brandFilter === b; const rgb = brandColorOf(b); return (
+                    <div key={b} onClick={() => { setBrandFilter(on ? null : b); setExploreQ(""); setMapSel(null); }} style={{ flexShrink: 0, display: "flex", alignItems: "center", gap: 6, padding: "5px 13px", borderRadius: WOBS[3], fontSize: 14, fontWeight: 700, cursor: "pointer", border: `2px solid ${INK}`, background: on ? hatch(rgb) : "#FFFEFA", color: on ? "#fff" : INK }}>
+                      {!on && <span style={{ width: 11, height: 11, borderRadius: "60% 45% 55% 50%", background: hatch(rgb) }} />}{b} <span style={{ fontSize: 12, opacity: 0.8 }}>{n}</span>
+                    </div>
+                  ); })}
+                </div>
+              )}
               <div style={{ flex: 1, position: "relative", margin: "0 12px 12px", ...wob(0), overflow: "hidden", minHeight: 0 }}>
                 <GymMap gyms={mapGyms} selectedId={mapSel} onSelect={(id) => setMapSel(id || null)} />
                 {exploreQ.trim() && mapGyms.length === 0 && (
@@ -798,7 +807,7 @@ export default function ClimbCrewApp() {
                     <div style={{ display: "flex", alignItems: "center", gap: 10 }}><div style={{ width: 36, height: 36, borderRadius: "56% 44% 52% 48% / 48% 52% 44% 56%", flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 700, fontSize: 18, color: "#fff", border: `2px solid ${INK}`, background: hatch(sg.due ? CRAYON.orange : CRAYON.green), transform: "rotate(-3deg)" }}>{sg.due ? "!" : "✓"}</div><div><div style={{ fontSize: 15, fontWeight: 700, color: sg.due ? "#B5730A" : "#3E7D2E" }}>{!sg.ever ? "아직 안 가봤어요" : sg.due ? "또 갈 때가 됐어요" : "최근 다녀왔어요"}</div><div style={{ fontSize: 12, color: "#78756B", marginTop: 2 }}>{!sg.ever ? `보통 ${sg.cycle}주 주기예요` : `${sg.weeks}주 전 방문 · 보통 ${sg.cycle}주 주기`}</div></div></div>
                   </div>
                 </div>
-                <div style={{ padding: "14px 16px 0" }}><a href={`https://map.naver.com/p/search/${encodeURIComponent((sg.name || "") + " " + (sg.loc || ""))}`} target="_blank" rel="noreferrer" style={{ display: "flex", alignItems: "center", gap: 10, padding: 14, ...cardStyle, borderRadius: WOBS[3], textDecoration: "none", color: "#3A3633" }}><div style={{ width: 34, height: 34, borderRadius: 9, background: "#03C75A", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800, fontSize: 17, color: "#fff", fontFamily: "sans-serif" }}>N</div><div style={{ flex: 1 }}><div style={{ fontSize: 14, fontWeight: 600 }}>네이버 지도에서 보기</div><div style={{ fontSize: 12, color: "#78756B" }}>길찾기 · 위치 · 영업시간</div></div><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M7 17 17 7M9 7h8v8" stroke="#78756B" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /></svg></a></div>
+                <div style={{ padding: "14px 16px 0" }}><a href={`https://map.naver.com/p/search/${encodeURIComponent(sg.name || "")}`} target="_blank" rel="noreferrer" style={{ display: "flex", alignItems: "center", gap: 10, padding: 14, ...cardStyle, borderRadius: WOBS[3], textDecoration: "none", color: "#3A3633" }}><div style={{ width: 34, height: 34, borderRadius: 9, background: "#03C75A", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800, fontSize: 17, color: "#fff", fontFamily: "sans-serif" }}>N</div><div style={{ flex: 1 }}><div style={{ fontSize: 14, fontWeight: 600 }}>네이버 지도에서 보기</div><div style={{ fontSize: 12, color: "#78756B" }}>길찾기 · 위치 · 영업시간</div></div><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M7 17 17 7M9 7h8v8" stroke="#78756B" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /></svg></a></div>
                 {sg.instagram && (
                   <div style={{ padding: "14px 16px 0" }}><a href={sg.instagram} target="_blank" rel="noreferrer" style={{ display: "flex", alignItems: "center", gap: 10, padding: 14, ...cardStyle, borderRadius: WOBS[2], textDecoration: "none", color: "#3A3633" }}><div style={{ width: 34, height: 34, borderRadius: 9, background: "linear-gradient(135deg,#F58529,#DD2A7B)", display: "flex", alignItems: "center", justifyContent: "center" }}><svg width="18" height="18" viewBox="0 0 24 24" fill="none"><rect x="3.5" y="3.5" width="17" height="17" rx="5" stroke="#fff" strokeWidth="1.8" /><circle cx="12" cy="12" r="4" stroke="#fff" strokeWidth="1.8" /><circle cx="17" cy="7" r="1.2" fill="#fff" /></svg></div><div style={{ flex: 1 }}><div style={{ fontSize: 14, fontWeight: 600 }}>인스타 뉴셋 공지 보기</div><div style={{ fontSize: 12, color: "#78756B" }}>{handleOf(sg.instagram) || "인스타그램 열기"}</div></div><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M7 17 17 7M9 7h8v8" stroke="#78756B" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /></svg></a></div>
                 )}
@@ -858,7 +867,7 @@ export default function ClimbCrewApp() {
           {is("profile") && (
             <div style={{ animation: "ccfade .3s ease", paddingBottom: 96 }}>
               <div style={{ padding: "56px 16px 8px" }}><div style={H1}>프로필</div></div>
-              <div style={{ padding: "14px 16px 0" }}><div style={{ display: "flex", alignItems: "center", gap: 14 }}>{me?.profileImg ? <img src={me.profileImg} alt="" style={{ width: 66, height: 66, borderRadius: "60% 45% 55% 50% / 50% 60% 45% 58%", objectFit: "cover", flexShrink: 0, border: `2.5px solid ${INK}`, transform: "rotate(-2deg)" }} /> : <div style={{ width: 66, height: 66, borderRadius: "60% 45% 55% 50% / 50% 60% 45% 58%", background: hatch(CRAYON.red), border: `2.5px solid ${INK}`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 28, fontWeight: 700, color: "#fff", flexShrink: 0, transform: "rotate(-2deg)" }}>{(me?.nickname || "?")[0]}</div>}<div><div style={{ fontSize: 20, fontWeight: 800 }}>{me?.nickname ?? "…"}</div><div style={{ fontSize: 13, color: "#78756B", marginTop: 2 }}>{ac?.name ?? ""}</div><div style={{ display: "inline-flex", alignItems: "center", gap: 6, marginTop: 8, padding: "5px 11px", borderRadius: 999, background: "#FBF0DA", fontSize: 12, fontWeight: 800, color: "#B4432E" }}><span style={{ width: 10, height: 10, borderRadius: 999, background: "#2F72E0", display: "inline-block" }} />{thetaChip}</div></div></div></div>
+              <div style={{ padding: "14px 16px 0" }}><div style={{ display: "flex", alignItems: "center", gap: 14 }}>{me?.profileImg ? <img src={me.profileImg} alt="" style={{ width: 66, height: 66, borderRadius: "60% 45% 55% 50% / 50% 60% 45% 58%", objectFit: "cover", flexShrink: 0, border: `2.5px solid ${INK}`, transform: "rotate(-2deg)" }} /> : <div style={{ width: 66, height: 66, borderRadius: "60% 45% 55% 50% / 50% 60% 45% 58%", background: hatch(CRAYON.red), border: `2.5px solid ${INK}`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 28, fontWeight: 700, color: "#fff", flexShrink: 0, transform: "rotate(-2deg)" }}>{(me?.nickname || "?")[0]}</div>}<div><div style={{ fontSize: 20, fontWeight: 800 }}>{me?.nickname ?? "…"}</div><div onClick={() => crews.length > 1 && setSwitcherOpen(true)} style={{ fontSize: 13, color: "#78756B", marginTop: 2, cursor: crews.length > 1 ? "pointer" : "default" }}>{crews.length === 0 ? "소속 크루 없음" : crews.length === 1 ? ac?.name : `${crews.length}개 크루 · ${ac?.name ?? ""} ▾`}</div><div style={{ display: "inline-flex", alignItems: "center", gap: 6, marginTop: 8, padding: "5px 11px", borderRadius: 999, background: "#FBF0DA", fontSize: 12, fontWeight: 800, color: "#B4432E" }}><span style={{ width: 10, height: 10, borderRadius: 999, background: "#2F72E0", display: "inline-block" }} />{thetaChip}</div></div></div></div>
               <div style={{ padding: "18px 16px 0" }}><div style={{ display: "flex", ...cardStyle, overflow: "hidden" }}>{[[String(gyms.filter((g) => g.ever).length), "방문 암장"], [String(gymReviews.length || 0), "작성 리뷰"], [String(visits.length), "방문 기록"]].map(([n, l], i) => (<div key={l} style={{ flex: 1, textAlign: "center", padding: "16px 0", borderLeft: i ? "2px dashed rgba(58,54,51,0.25)" : "none" }}><div style={{ fontSize: 20, fontWeight: 800 }}>{n}</div><div style={{ fontSize: 12, color: "#78756B", marginTop: 2 }}>{l}</div></div>))}</div></div>
               <div style={{ padding: "24px 16px 0" }}><div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}><div style={sectionLabel}>내 완등 로그</div><div style={{ fontSize: 11, fontWeight: 700, color: "#78756B", background: "#F3EEDF", padding: "3px 9px", borderRadius: 999 }}>준비 중</div></div><div style={{ padding: 14, ...cardStyle, color: "#78756B", fontSize: 13 }}>완등 기록 기능은 준비 중이에요.</div></div>
               <div style={{ padding: "22px 16px 0" }}><div style={{ ...cardStyle, overflow: "hidden" }}>
@@ -912,35 +921,23 @@ export default function ClimbCrewApp() {
                 </div>
               </div>
 
-              {/* 홈 암장 (검색으로 추가) */}
+              {/* 홈 암장 (편집은 모달) */}
               <div style={{ padding: "26px 16px 0" }}>
-                <div style={{ ...sectionLabel, marginBottom: 2 }}>홈 암장 · {manageHomeIds.length}/4</div>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 2 }}>
+                  <div style={sectionLabel}>홈 암장 · {crewGyms.filter((g) => g.isHome).length}/4</div>
+                  <button onClick={openHomeEdit} style={{ height: 34, padding: "0 14px", border: `2px solid ${INK}`, borderRadius: WOBS[3], background: "#FFFEFA", fontSize: 14, fontWeight: 700, cursor: "pointer" }}>편집</button>
+                </div>
                 <div style={{ fontSize: 13, color: "#78756B", marginBottom: 12 }}>자주 가는 곳. 투표 후보와 &quot;가야 할 암장&quot;에 떠요</div>
-                <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 12 }}>
-                  {manageHomeIds.length === 0 && <div style={{ padding: 13, ...cardStyle, color: "#78756B", fontSize: 14, borderRadius: WOBS[2] }}>아직 없어요. 아래에서 검색해 추가하세요.</div>}
-                  {gyms.filter((g) => manageHomeIds.includes(g.id)).map((g) => (
-                    <div key={g.id} onClick={() => toggleManageHome(g.id)} style={{ display: "flex", alignItems: "center", gap: 12, padding: "11px 14px", borderRadius: WOBS[1], border: `2px solid ${INK}`, background: `rgba(${CRAYON.yellow},0.16)`, cursor: "pointer" }}>
+                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                  {crewGyms.filter((g) => g.isHome).length === 0 && <div style={{ padding: 13, ...cardStyle, color: "#78756B", fontSize: 14, borderRadius: WOBS[2] }}>아직 없어요. &quot;편집&quot;에서 추가하세요.</div>}
+                  {gyms.filter((g) => g.isHome).map((g) => (
+                    <div key={g.id} onClick={() => openGym(g.id)} style={{ display: "flex", alignItems: "center", gap: 12, padding: "11px 14px", ...cardStyle, borderRadius: WOBS[1], cursor: "pointer" }}>
                       <div style={avatarStyle(g.color, 34)}>{g.name[0]}</div>
                       <div style={{ flex: 1, minWidth: 0 }}><div style={{ fontSize: 15, fontWeight: 700 }}>{g.name}</div><div style={{ fontSize: 12, color: "#78756B", marginTop: 2 }}>{g.loc}</div></div>
-                      <svg width="18" height="18" viewBox="0 0 14 14"><path d="M2 2l10 10M12 2 2 12" stroke="#78756B" strokeWidth="2" strokeLinecap="round" /></svg>
+                      <ChevR />
                     </div>
                   ))}
                 </div>
-                <div style={{ display: "flex", alignItems: "center", gap: 8, height: 46, padding: "0 14px", background: "#FFFEFA", border: `2px solid ${INK}`, borderRadius: WOBS[2] }}>
-                  <svg width="17" height="17" viewBox="0 0 20 20" fill="none"><circle cx="9" cy="9" r="6.2" stroke="#78756B" strokeWidth="1.8" /><path d="M14 14l4 4" stroke="#78756B" strokeWidth="1.8" strokeLinecap="round" /></svg>
-                  <input value={manageQ} onChange={(e) => setManageQ(e.target.value)} placeholder="암장 검색해서 홈으로 추가" style={{ flex: 1, border: "none", background: "transparent", outline: "none", fontSize: 15, minWidth: 0 }} />
-                  {manageQ && <div onClick={() => setManageQ("")} style={{ cursor: "pointer", padding: 4 }}><svg width="14" height="14" viewBox="0 0 14 14"><path d="M2 2l10 10M12 2 2 12" stroke="#78756B" strokeWidth="2" strokeLinecap="round" /></svg></div>}
-                </div>
-                {manageQ.trim() && (
-                  <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 10 }}>
-                    {gyms.filter((g) => !manageHomeIds.includes(g.id) && (g.name + " " + g.loc).toLowerCase().includes(manageQ.trim().toLowerCase())).slice(0, 20).map((g) => (
-                      <div key={g.id} onClick={() => { toggleManageHome(g.id); }} style={{ display: "flex", alignItems: "center", gap: 12, padding: "11px 14px", ...cardStyle, borderRadius: WOBS[2], cursor: "pointer" }}>
-                        <div style={{ width: 30, height: 30, borderRadius: "56% 44% 52% 48%", background: "#EFEBDD", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}><svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M12 5v14M5 12h14" stroke="#78756B" strokeWidth="2.4" strokeLinecap="round" /></svg></div>
-                        <div style={{ flex: 1, minWidth: 0 }}><div style={{ fontSize: 15, fontWeight: 600 }}>{g.name}</div><div style={{ fontSize: 12, color: "#78756B", marginTop: 2 }}>{g.loc}</div></div>
-                      </div>
-                    ))}
-                  </div>
-                )}
               </div>
             </div>
           )}
@@ -1203,6 +1200,33 @@ export default function ClimbCrewApp() {
               </div>
               <textarea value={reviewText} onChange={(e) => setReviewText(e.target.value)} placeholder="이번 셋 어땠어요? (예: 파랑 볼륨 꿀잼, 주말 저녁 붐빔)" style={{ width: "100%", height: 90, border: "2px solid #3A3633", borderRadius: 10, padding: "12px 14px", fontSize: 14, background: "#FFFDF6", outline: "none", resize: "none", lineHeight: 1.5, marginBottom: 14 }} />
               <button onClick={submitReview} style={{ width: "100%", height: 52, fontSize: 18, fontWeight: 700, ...crayonBtn(CRAYON.red, 0) }}>등록</button>
+            </div>
+          </>
+        )}
+        {homeEditOpen && (
+          <>
+            <div onClick={() => setHomeEditOpen(false)} style={{ position: "absolute", inset: 0, background: "rgba(28,28,26,0.42)", zIndex: 120, animation: "ccfade .2s ease" }} />
+            <div style={{ position: "absolute", left: 0, right: 0, bottom: 0, zIndex: 130, background: "#FFFEFA", borderTop: `2.5px solid ${INK}`, borderRadius: "28px 22px 0 0 / 24px 28px 0 0", padding: "10px 16px 24px", boxShadow: "0 -8px 30px rgba(58,54,51,0.16)", animation: "ccsheet .28s cubic-bezier(.2,.8,.2,1)", display: "flex", flexDirection: "column", maxHeight: "82%" }}>
+              <div style={{ width: 44, height: 4, borderRadius: 999, background: "rgba(58,54,51,0.3)", margin: "6px auto 12px", transform: "rotate(-1deg)" }} />
+              <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", margin: "0 4px 12px" }}>
+                <div style={{ fontSize: 18, fontWeight: 800 }}>홈 암장 편집</div>
+                <div style={{ fontSize: 14, fontWeight: 700, color: manageHomeIds.length >= 4 ? "#B4432E" : "#78756B" }}>{manageHomeIds.length}/4</div>
+              </div>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, height: 46, padding: "0 14px", flexShrink: 0, background: "#fff", border: `2px solid ${INK}`, borderRadius: WOBS[2] }}>
+                <svg width="17" height="17" viewBox="0 0 20 20" fill="none"><circle cx="9" cy="9" r="6.2" stroke="#78756B" strokeWidth="1.8" /><path d="M14 14l4 4" stroke="#78756B" strokeWidth="1.8" strokeLinecap="round" /></svg>
+                <input value={manageQ} onChange={(e) => setManageQ(e.target.value)} placeholder="암장 검색" style={{ flex: 1, border: "none", background: "transparent", outline: "none", fontSize: 15, minWidth: 0 }} />
+                {manageQ && <div onClick={() => setManageQ("")} style={{ cursor: "pointer", padding: 4 }}><svg width="14" height="14" viewBox="0 0 14 14"><path d="M2 2l10 10M12 2 2 12" stroke="#78756B" strokeWidth="2" strokeLinecap="round" /></svg></div>}
+              </div>
+              <div style={{ flex: 1, overflowY: "auto", marginTop: 10, display: "flex", flexDirection: "column", gap: 8, minHeight: 120 }}>
+                {(manageQ.trim() ? gyms.filter((g) => (g.name + " " + g.loc).toLowerCase().includes(manageQ.trim().toLowerCase())) : gyms.filter((g) => manageHomeIds.includes(g.id))).slice(0, 40).map((g) => { const sel = manageHomeIds.includes(g.id); return (
+                  <div key={g.id} onClick={() => toggleManageHome(g.id)} style={{ ...rowStyle(sel), flexShrink: 0 }}>
+                    <div style={boxStyle(sel)}>{sel ? "✓" : ""}</div>
+                    <div style={{ flex: 1, minWidth: 0 }}><div style={{ fontSize: 15, fontWeight: 600 }}>{g.name}</div><div style={{ fontSize: 12, color: "#78756B", marginTop: 2 }}>{g.loc}</div></div>
+                  </div>
+                ); })}
+                {!manageQ.trim() && manageHomeIds.length === 0 && <div style={{ padding: 14, color: "#78756B", fontSize: 14, textAlign: "center" }}>검색해서 홈 암장을 골라보세요</div>}
+              </div>
+              <button onClick={saveHomeGyms} style={{ width: "100%", height: 50, marginTop: 12, flexShrink: 0, fontSize: 17, fontWeight: 700, ...crayonBtn(CRAYON.red, 0) }}>저장</button>
             </div>
           </>
         )}

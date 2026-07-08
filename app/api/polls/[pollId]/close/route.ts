@@ -1,7 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import { getCurrentUserId } from "@/lib/auth";
 import { json, error, unauthorized, forbidden, notFound } from "@/lib/http";
-import { isCrewLeader } from "@/lib/crew";
+import { getApprovedMembership } from "@/lib/crew";
 import { settingIdForVisit } from "@/lib/gym";
 
 // 투표 마감 → 최다 득표 (날짜 + 암장) 확정 → 방문 기록 자동 생성.
@@ -21,8 +21,8 @@ export async function POST(_req: Request, { params }: { params: Promise<{ pollId
   if (!poll) return notFound("투표");
   if (poll.status === "CLOSED") return error("이미 마감된 투표입니다", 409);
 
-  const isLeader = await isCrewLeader(poll.crewId, userId);
-  if (!isLeader && poll.creatorId !== userId) return forbidden();
+  // 일단은 모든 크루원이 마감할 수 있게 (권한 분기는 추후)
+  if (!(await getApprovedMembership(poll.crewId, userId))) return forbidden();
 
   if (poll.dateOptions.length === 0) {
     return error("날짜 후보가 없어 확정할 수 없습니다", 422);

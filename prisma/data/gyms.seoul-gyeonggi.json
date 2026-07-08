@@ -9,24 +9,6 @@
     "link": "https://www.instagram.com/pepper_wonheung"
   },
   {
-    "kakaoPlaceId": "naver:몽키즈클라이밍 고양화정점|경기도 고양시 덕양구 백양로 51 네이버타운 10층 1001호",
-    "name": "몽키즈클라이밍 고양화정점",
-    "address": "경기도 고양시 덕양구 백양로 51 네이버타운 10층 1001호",
-    "lat": 37.6302764,
-    "lng": 126.8332872,
-    "phone": null,
-    "link": "http://pf.kakao.com/_hbKBG/chat"
-  },
-  {
-    "kakaoPlaceId": "naver:몽키즈클라이밍 일산마두점|경기도 고양시 일산동구 강촌로 157 7층 704호",
-    "name": "몽키즈클라이밍 일산마두점",
-    "address": "경기도 고양시 일산동구 강촌로 157 7층 704호",
-    "lat": 37.6536154,
-    "lng": 126.7909478,
-    "phone": null,
-    "link": null
-  },
-  {
     "kakaoPlaceId": "naver:일산SK클라이밍|경기도 고양시 일산동구 일산로286번길 13-5 지하1층",
     "name": "일산SK클라이밍",
     "address": "경기도 고양시 일산동구 일산로286번길 13-5 지하1층",
@@ -90,15 +72,6 @@
     "link": "https://www.instagram.com/madgym_climbing"
   },
   {
-    "kakaoPlaceId": "naver:몽키즈클라이밍 경기광주태전점|경기도 광주시 벼루개로 20 지층 B109호",
-    "name": "몽키즈클라이밍 경기광주태전점",
-    "address": "경기도 광주시 벼루개로 20 지층 B109호",
-    "lat": 37.3824884,
-    "lng": 127.2304057,
-    "phone": null,
-    "link": "https://blog.naver.com/mongkids_taejeon"
-  },
-  {
     "kakaoPlaceId": "naver:티 클라이밍|경기도 광주시 신현로 4 2층",
     "name": "티 클라이밍",
     "address": "경기도 광주시 신현로 4 2층",
@@ -151,15 +124,6 @@
     "lng": 126.9449057,
     "phone": null,
     "link": "https://www.instagram.com/spicy_climbing"
-  },
-  {
-    "kakaoPlaceId": "naver:몽키즈클라이밍 김포운양점|경기도 김포시 김포한강11로 288-24 2층 201호 몽키즈클라이밍",
-    "name": "몽키즈클라이밍 김포운양점",
-    "address": "경기도 김포시 김포한강11로 288-24 2층 201호 몽키즈클라이밍",
-    "lat": 37.6542635,
-    "lng": 126.683344,
-    "phone": null,
-    "link": "http://pf.kakao.com/_cLxbxmG"
   },
   {
     "kakaoPlaceId": "naver:잼클라이밍|경기도 김포시 김포한강2로 76 프레즌스빌딩 3층 301호",
@@ -261,15 +225,6 @@
     "link": "https://blog.naver.com/wooiljg"
   },
   {
-    "kakaoPlaceId": "naver:몽키즈클라이밍 부천중동점|경기도 부천시 원미구 석천로 171 중동프라자 6층 604호",
-    "name": "몽키즈클라이밍 부천중동점",
-    "address": "경기도 부천시 원미구 석천로 171 중동프라자 6층 604호",
-    "lat": 37.5028083,
-    "lng": 126.7624838,
-    "phone": null,
-    "link": "https://blog.naver.com/mongkids_bucheon"
-  },
-  {
     "kakaoPlaceId": "naver:손상원 클라이밍짐 판교점|경기도 성남시 분당구 대왕판교로 670",
     "name": "손상원 클라이밍짐 판교점",
     "address": "경기도 성남시 분당구 대왕판교로 670",
@@ -313,15 +268,6 @@
     "lng": 127.1412642,
     "phone": null,
     "link": "https://www.instagram.com/grippick_climbing_wiryecenter"
-  },
-  {
-    "kakaoPlaceId": "naver:몽키즈클라이밍 위례점|경기도 성남시 수정구 위례동로 147 9층 901호",
-    "name": "몽키즈클라이밍 위례점",
-    "address": "경기도 성남시 수정구 위례동로 147 9층 901호",
-    "lat": 37.4730816,
-    "lng": 127.15011,
-    "phone": null,
-    "link": null
   },
   {
     "kakaoPlaceId": "naver:락페이스클라이밍|경기도 성남시 중원구 산성대로 340-1 범원빌딩 8층",
@@ -430,15 +376,6 @@
     "lng": 126.791825,
     "phone": null,
     "link": "https://cafe.naver.com/bluewjy32"
-  },
-  {
-    "kakaoPlaceId": "naver:몽키즈클라이밍 시흥배곧점|경기도 시흥시 서울대학로278번길 61 서영베니스스퀘어 C동 5층 528 호",
-    "name": "몽키즈클라이밍 시흥배곧점",
-    "address": "경기도 시흥시 서울대학로278번길 61 서영베니스스퀘어 C동 5층 528 호",
-    "lat": 37.3681661,
-    "lng": 126.7306749,
-    "phone": null,
-    "link": "https://www.instagram.com/mongkids_climbing.bg"
   },
   {
     "kakaoPlaceId": "naver:볼더가든클라이밍|경기도 시흥시 은계호수로 49 센트럴돔 3층 3043호,3044호,3045호",
@@ -558,15 +495,6 @@
     "link": "https://m.cafe.naver.com/ca-fe/climbingholic"
   },
   {
-    "kakaoPlaceId": "naver:몽키즈클라이밍 안양평촌점|경기도 안양시 동안구 평촌대로 110 5층 501호",
-    "name": "몽키즈클라이밍 안양평촌점",
-    "address": "경기도 안양시 동안구 평촌대로 110 5층 501호",
-    "lat": 37.3823584,
-    "lng": 126.9612926,
-    "phone": null,
-    "link": "https://www.besttimes.co.kr/11090"
-  },
-  {
     "kakaoPlaceId": "naver:양주인공암벽장|경기도 양주시 광적면 부흥로618번길 303",
     "name": "양주인공암벽장",
     "address": "경기도 양주시 광적면 부흥로618번길 303",
@@ -583,15 +511,6 @@
     "lng": 127.0941014,
     "phone": null,
     "link": "https://www.instagram.com/thevibeclimbing_yangju"
-  },
-  {
-    "kakaoPlaceId": "naver:몽키즈클라이밍 양주옥정점|경기도 양주시 옥정로 222 스카이타워 903호",
-    "name": "몽키즈클라이밍 양주옥정점",
-    "address": "경기도 양주시 옥정로 222 스카이타워 903호",
-    "lat": 37.8214014,
-    "lng": 127.0921542,
-    "phone": null,
-    "link": "https://blog.naver.com/mongkids_yangju"
   },
   {
     "kakaoPlaceId": "naver:오산클라이밍|경기도 오산시 오산로 336",
@@ -639,15 +558,6 @@
     "link": "https://www.instagram.com/bouldermate_suji"
   },
   {
-    "kakaoPlaceId": "naver:몽키즈클라이밍 수지성복점|경기도 용인시 수지구 성복2로 17 수지골드프라자 4층 201호",
-    "name": "몽키즈클라이밍 수지성복점",
-    "address": "경기도 용인시 수지구 성복2로 17 수지골드프라자 4층 201호",
-    "lat": 37.3107116,
-    "lng": 127.0810234,
-    "phone": null,
-    "link": "http://qr.kakao.com/talk/h2N1sSi0K28lrtu8tEC6sCEPXPA-"
-  },
-  {
     "kakaoPlaceId": "naver:수지클라이밍|경기도 용인시 수지구 포은대로 499 아르피아스포츠센터 B2F",
     "name": "수지클라이밍",
     "address": "경기도 용인시 수지구 포은대로 499 아르피아스포츠센터 B2F",
@@ -655,15 +565,6 @@
     "lng": 127.1055379,
     "phone": null,
     "link": "http://www.sujiclimbing.com"
-  },
-  {
-    "kakaoPlaceId": "naver:몽키즈클라이밍 용인역북점|경기도 용인시 처인구 명지로40번길 4 제2층 제205호",
-    "name": "몽키즈클라이밍 용인역북점",
-    "address": "경기도 용인시 처인구 명지로40번길 4 제2층 제205호",
-    "lat": 37.2326645,
-    "lng": 127.1880286,
-    "phone": null,
-    "link": "https://blog.naver.com/mongkidsyb"
   },
   {
     "kakaoPlaceId": "naver:에잇 픽스 클라이밍|경기도 의왕시 계원대학로 22 오남프라자 6층",
@@ -765,15 +666,6 @@
     "link": "http://cafe.naver.com/pajuclimb"
   },
   {
-    "kakaoPlaceId": "naver:몽키즈클라이밍 파주운정점|경기도 파주시 미래로 622 701호",
-    "name": "몽키즈클라이밍 파주운정점",
-    "address": "경기도 파주시 미래로 622 701호",
-    "lat": 37.7326853,
-    "lng": 126.7509491,
-    "phone": null,
-    "link": "https://www.instagram.com/mongkids_paju"
-  },
-  {
     "kakaoPlaceId": "naver:운정점핑클라이밍|경기도 파주시 미래로 624 3층 302호",
     "name": "운정점핑클라이밍",
     "address": "경기도 파주시 미래로 624 3층 302호",
@@ -828,15 +720,6 @@
     "link": "https://blog.naver.com/hkmin4499"
   },
   {
-    "kakaoPlaceId": "naver:몽키즈클라이밍 하남미사점|경기도 하남시 미사강변대로226번길 15 2층 몽키즈클라이밍 하남미사점",
-    "name": "몽키즈클라이밍 하남미사점",
-    "address": "경기도 하남시 미사강변대로226번길 15 2층 몽키즈클라이밍 하남미사점",
-    "lat": 37.570119,
-    "lng": 127.1847093,
-    "phone": null,
-    "link": "https://blog.naver.com/mongkids_ms"
-  },
-  {
     "kakaoPlaceId": "naver:클라임 어스 미사점|경기도 하남시 미사강변동로 81 13층",
     "name": "클라임 어스 미사점",
     "address": "경기도 하남시 미사강변동로 81 13층",
@@ -889,15 +772,6 @@
     "lng": 127.0586511,
     "phone": null,
     "link": "https://www.instagram.com/moonclimb_official/"
-  },
-  {
-    "kakaoPlaceId": "naver:몽키즈클라이밍 동탄반송점|경기도 화성시 동탄구 동탄중심상가1길 8 2층 205호",
-    "name": "몽키즈클라이밍 동탄반송점",
-    "address": "경기도 화성시 동탄구 동탄중심상가1길 8 2층 205호",
-    "lat": 37.2000017,
-    "lng": 127.0722049,
-    "phone": null,
-    "link": "https://blog.naver.com/kankokuoni"
   },
   {
     "kakaoPlaceId": "naver:마그마홀드|경기도 화성시 만세구 향남읍 우등길 24 1, 2층",
@@ -1206,15 +1080,6 @@
     "link": "https://blog.naver.com/dccg2020"
   },
   {
-    "kakaoPlaceId": "naver:몽키즈클라이밍 중계점|서울특별시 노원구 한글비석로 359 지하1층",
-    "name": "몽키즈클라이밍 중계점",
-    "address": "서울특별시 노원구 한글비석로 359 지하1층",
-    "lat": 37.6576711,
-    "lng": 127.0748101,
-    "phone": null,
-    "link": null
-  },
-  {
     "kakaoPlaceId": "naver:도봉파워클라이밍센터|서울특별시 도봉구 도봉로133길 42 4층",
     "name": "도봉파워클라이밍센터",
     "address": "서울특별시 도봉구 도봉로133길 42 4층",
@@ -1258,15 +1123,6 @@
     "lng": 127.0307939,
     "phone": null,
     "link": null
-  },
-  {
-    "kakaoPlaceId": "naver:몽키즈클라이밍 답십리점|서울특별시 동대문구 사가정로 80 1층 126호",
-    "name": "몽키즈클라이밍 답십리점",
-    "address": "서울특별시 동대문구 사가정로 80 1층 126호",
-    "lat": 37.5752238,
-    "lng": 127.0549266,
-    "phone": null,
-    "link": "https://www.instagram.com/mongkidsclimbing_dapsimni"
   },
   {
     "kakaoPlaceId": "naver:웨어하우스 볼더링입구|서울특별시 동대문구 제기동",
@@ -1357,15 +1213,6 @@
     "lng": 126.9432653,
     "phone": null,
     "link": "https://blog.naver.com/damjang_/224136346506"
-  },
-  {
-    "kakaoPlaceId": "naver:몽키즈클라이밍 북가좌점|서울특별시 서대문구 응암로 54 5층",
-    "name": "몽키즈클라이밍 북가좌점",
-    "address": "서울특별시 서대문구 응암로 54 5층",
-    "lat": 37.5778964,
-    "lng": 126.9102202,
-    "phone": null,
-    "link": "https://www.instagram.com/mongkids.dmc_bukgajwa"
   },
   {
     "kakaoPlaceId": "naver:손상원 클라이밍짐 강남역점|서울특별시 서초구 강남대로 331 지하1층",
@@ -1501,15 +1348,6 @@
     "lng": 126.8709292,
     "phone": null,
     "link": "http://cafe.naver.com/dolgym"
-  },
-  {
-    "kakaoPlaceId": "naver:몽키즈클라이밍 목동점|서울특별시 양천구 목동동로 65 6층 601호, 602호",
-    "name": "몽키즈클라이밍 목동점",
-    "address": "서울특별시 양천구 목동동로 65 6층 601호, 602호",
-    "lat": 37.5155786,
-    "lng": 126.8621823,
-    "phone": null,
-    "link": "https://mongkids.co.kr/"
   },
   {
     "kakaoPlaceId": "naver:서울볼더스 클라이밍 목동점|서울특별시 양천구 신목로 53 2층",
@@ -1681,14 +1519,5 @@
     "lng": 127.0878962,
     "phone": null,
     "link": "https://www.instagram.com/cracker_sangbong/"
-  },
-  {
-    "kakaoPlaceId": "naver:몽키즈클라이밍 신내점|서울특별시 중랑구 신내로17길 39 신내7단지 진로아파트상가 지하1층",
-    "name": "몽키즈클라이밍 신내점",
-    "address": "서울특별시 중랑구 신내로17길 39 신내7단지 진로아파트상가 지하1층",
-    "lat": 37.6151541,
-    "lng": 127.0937728,
-    "phone": null,
-    "link": "http://050713963423.tshome.co.kr/"
   }
 ]
