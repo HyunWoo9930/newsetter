@@ -79,7 +79,7 @@ export async function POST(_req: Request, { params }: { params: Promise<{ pollId
     }
   }
 
-  emitCrew(poll.crewId, { type: "poll_closed", pollId, title: poll.title, visitId: visit?.id ?? null });
+  emitCrew(poll.crewId, { type: "poll_closed", pollId, title: poll.title, visitId: visit?.id ?? null, userId });
 
   return json({ poll: updatedPoll, visit });
 }

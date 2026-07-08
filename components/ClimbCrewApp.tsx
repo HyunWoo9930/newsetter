@@ -116,6 +116,10 @@ export default function ClimbCrewApp() {
   const [crewGyms, setCrewGyms] = useState<Any[]>([]);
   const [polls, setPolls] = useState<Any[]>([]);
   const [visits, setVisits] = useState<Any[]>([]);
+  const [visitEdit, setVisitEdit] = useState<Any | null>(null);
+  const [visitEditDate, setVisitEditDate] = useState("");
+  const [visitEditGymId, setVisitEditGymId] = useState<string | null>(null);
+  const [visitEditGymQ, setVisitEditGymQ] = useState("");
   const [crewDetail, setCrewDetail] = useState<Any>(null);
   const [requests, setRequests] = useState<Any[]>([]);
   const [gymDetail, setGymDetail] = useState<Any>(null);
@@ -204,6 +208,36 @@ export default function ClimbCrewApp() {
     document.addEventListener("visibilitychange", onVis);
     return () => { window.removeEventListener("pageshow", refetch); document.removeEventListener("visibilitychange", onVis); };
   }, [status, loadCrews]);
+
+  // #7 실시간 알림(SSE): 내 크루들의 이벤트를 받아 토스트 + 자동 새로고침
+  const activeCrewRef = useRef<string | null>(null);
+  useEffect(() => { activeCrewRef.current = activeCrewId; }, [activeCrewId]);
+  useEffect(() => {
+    if (status !== "authenticated") return;
+    const es = new EventSource("/api/events");
+    es.onmessage = (ev) => {
+      let e: Any; try { e = JSON.parse(ev.data); } catch { return; }
+      if (!e || e.type === "hello") return;
+      const msgMap: Record<string, string> = {
+        poll_created: "🗳️ 새 투표가 올라왔어요",
+        vote_submitted: "✍️ 누군가 투표했어요",
+        poll_closed: `✅ 투표 마감: ${e.title ?? ""}`,
+        visit_created: "📅 새 일정이 잡혔어요",
+        visit_updated: "🔁 일정이 변경됐어요",
+        visit_canceled: "❌ 일정이 취소됐어요",
+        visit_attend: "🙋 일정 참여자가 바뀌었어요",
+      };
+      if (msgMap[e.type]) showToast(msgMap[e.type]);
+      const cur = activeCrewRef.current;
+      if (cur && e.crewId === cur) {
+        api.crewPolls(cur).then(setPolls).catch(() => {});
+        api.crewVisits(cur).then(setVisits).catch(() => {});
+        api.crewGyms(cur).then(setCrewGyms).catch(() => {});
+      }
+    };
+    es.onerror = () => { /* 브라우저가 자동 재연결 */ };
+    return () => es.close();
+  }, [status]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // 카카오톡 공유 SDK (JS 키가 있을 때만 로드)
   useEffect(() => {
@@ -324,6 +358,13 @@ export default function ClimbCrewApp() {
   };
   const recordVisit = async () => { if (!activeCrewId || !selGym) return; try { await api.post(`/api/crews/${activeCrewId}/visits`, { gymId: selGym, date: new Date().toISOString() }); showToast("방문 기록을 추가했어요"); api.crewVisits(activeCrewId).then(setVisits); if (selGym) api.gym(selGym, activeCrewId).then(setGymDetail); } catch (e: Any) { showToast(e.message); } };
 
+  // 일정(방문) 참여/취소/변경 — #2,#3,#4
+  const reloadVisits = () => { if (activeCrewId) { api.crewVisits(activeCrewId).then(setVisits).catch(() => {}); api.crewGyms(activeCrewId).then(setCrewGyms).catch(() => {}); } };
+  const attendVisit = async (v: Any, going: boolean) => { try { await api.visitAttend(v.id, going); reloadVisits(); showToast(going ? "이 일정에 참여해요!" : "참여를 취소했어요"); } catch (e: Any) { showToast(e.message); } };
+  const cancelVisit = async (v: Any) => { try { await api.visitCancel(v.id); reloadVisits(); showToast("일정을 취소했어요"); } catch (e: Any) { showToast(e.message); } };
+  const openVisitEdit = (v: Any) => { setVisitEdit(v); setVisitEditDate(String(v.date).slice(0, 10)); setVisitEditGymId(v.gym?.id ?? null); setVisitEditGymQ(""); };
+  const saveVisitEdit = async () => { if (!visitEdit) return; if (!visitEditDate) { showToast("날짜를 골라주세요"); return; } try { await api.visitUpdate(visitEdit.id, { date: visitEditDate, gymId: visitEditGymId || undefined }); setVisitEdit(null); reloadVisits(); showToast("일정을 변경했어요"); } catch (e: Any) { showToast(e.message); } };
+
   const openCreatePoll = () => { setPollTitle(""); setPollRange({ start: null, end: null }); setPollDeadlineDays(5); setPollGymIds([]); setPickedDay(null); setPollCalOffset(0); setGymSearch(""); go("createPoll"); };
   // 범위 선택: 첫 탭=시작, 둘째 탭=끝(시작보다 빠르면 시작을 다시 잡음). 이미 범위가 있으면 새로 시작.
   const tapRangeDay = (ds: string) => setPollRange((r) => {
@@ -435,7 +476,7 @@ export default function ClimbCrewApp() {
   const openVote = openPoll ? { id: openPoll.id, title: openPoll.title, deadline: fmtDeadline(openPoll.deadline), responded: openPoll.responderCount ?? 0, total: memberCount } : null;
   const respondedCount = (openVote?.responded ?? 0);
   const confirmedPoll = polls.find((p) => p.confirmedDate);
-  const canClose = !!(me && openPoll); // 일단은 모든 멤버가 마감 가능
+  const canClose = !!(me && openPoll && openPoll.creatorId === me.id); // #1 투표 만든 사람만 마감
   const upcoming = confirmedPoll ? { date: fmtDate(confirmedPoll.confirmedDate), gym: confirmedPoll.confirmedGymName || "", going: confirmedPoll.responderCount ?? 0 } : null;
 
   const adaptProb = (p: Any) => ({ id: p.id, color: p.color, tag: tagOf(p.label, p.color), feel: feelFromScore(p.difficultyScore), send: p.sendRate == null ? 0 : Math.round(p.sendRate * 100), honey: (p.honeyRatio ?? 0) > 0 || (p.honeyCount ?? 0) > 0, videos: p.videoCount ?? 0, mine: !!p.mySent, hex: HEX[p.color] || "#999" });
@@ -465,23 +506,39 @@ export default function ClimbCrewApp() {
   const calMonth = `${calY}년 ${calM + 1}월`;
   const daysInMonth = new Date(calY, calM + 1, 0).getDate();
   const firstDow = calBaseDate.getDay();
-  const visitedDays = new Set(visits.filter((v) => { const d = new Date(v.date); return d.getFullYear() === calY && d.getMonth() === calM; }).map((v) => new Date(v.date).getDate()));
+  // #5 내가 가는 일정 vs 크루 일정(내가 안 감) 구분
+  const inCalMonth = (v: Any) => { const d = new Date(v.date); return d.getFullYear() === calY && d.getMonth() === calM; };
+  const myDays = new Set(visits.filter((v) => v.mine && inCalMonth(v)).map((v) => new Date(v.date).getDate()));
+  const crewDays = new Set(visits.filter((v) => !v.mine && inCalMonth(v)).map((v) => new Date(v.date).getDate()));
   const calBase: CSSProperties = { width: 34, height: 34, display: "flex", alignItems: "center", justifyContent: "center", borderRadius: 999, margin: "0 auto", color: "#3A3633" };
   const calCells: { key: string; day: number | string; style: CSSProperties }[] = [];
   for (let i = 0; i < firstDow; i++) calCells.push({ key: "b" + i, day: "", style: calBase });
-  for (let d = 1; d <= daysInMonth; d++) { let v: CSSProperties = {}; if (visitedDays.has(d)) v = { background: hatch(CRAYON.green), color: "#fff", fontWeight: 700, border: `2px solid ${INK}`, borderRadius: "56% 44% 52% 48% / 48% 52% 44% 56%", transform: "rotate(-3deg)" }; else if (isCurMonth && d === now.getDate()) v = { border: "2.5px solid #E24D3A", borderRadius: "52% 48% 46% 54% / 50% 46% 54% 50%", color: "#B4432E", fontWeight: 700, transform: "rotate(2deg)" }; calCells.push({ key: "d" + d, day: d, style: { ...calBase, ...v } }); }
+  for (let d = 1; d <= daysInMonth; d++) { let v: CSSProperties = {}; if (myDays.has(d)) v = { background: hatch(CRAYON.green), color: "#fff", fontWeight: 700, border: `2px solid ${INK}`, borderRadius: "56% 44% 52% 48% / 48% 52% 44% 56%", transform: "rotate(-3deg)" }; else if (crewDays.has(d)) v = { border: "2px dashed #2E6B22", color: "#2E6B22", fontWeight: 700, borderRadius: "56% 44% 52% 48% / 48% 52% 44% 56%", transform: "rotate(-2deg)" }; else if (isCurMonth && d === now.getDate()) v = { border: "2.5px solid #E24D3A", borderRadius: "52% 48% 46% 54% / 50% 46% 54% 50%", color: "#B4432E", fontWeight: 700, transform: "rotate(2deg)" }; calCells.push({ key: "d" + d, day: d, style: { ...calBase, ...v } }); }
   const todayMid = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
   const futureVisits = visits.filter((v) => new Date(v.date).getTime() >= todayMid).sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
   const pastVisits = visits.filter((v) => new Date(v.date).getTime() < todayMid).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-  const visitRow = (v: Any, future: boolean) => (
-    <div key={v.id} style={{ display: "flex", alignItems: "center", gap: 12, padding: 14, ...cardStyle }}>
-      <div style={{ width: 44, height: 44, borderRadius: 12, flexShrink: 0, background: future ? "#FBF0DA" : "#E4F5EC", display: "flex", alignItems: "center", justifyContent: "center" }}>
-        {future ? <svg width="20" height="20" viewBox="0 0 24 24" fill="none"><rect x="3.5" y="5" width="17" height="15.5" rx="2.5" stroke="#E24D3A" strokeWidth="1.8" /><path d="M3.5 9.5h17M8 3.5v3M16 3.5v3" stroke="#E24D3A" strokeWidth="1.8" strokeLinecap="round" /></svg>
-                : <svg width="20" height="20" viewBox="0 0 20 20"><path d="M4 10.5 8 14.5 16 5.5" stroke="#6BBF59" strokeWidth="2.4" fill="none" strokeLinecap="round" strokeLinejoin="round" /></svg>}
+  const visitRow = (v: Any, future: boolean) => {
+    const canEdit = !!me && (v.createdById === me.id || ac?.leaderId === me.id);
+    return (
+    <div key={v.id} style={{ padding: 14, ...cardStyle, ...(v.mine ? { border: `2px solid #2E6B22`, background: "#EAF7EE" } : {}) }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+        <div style={{ width: 44, height: 44, borderRadius: 12, flexShrink: 0, background: future ? "#FBF0DA" : "#E4F5EC", display: "flex", alignItems: "center", justifyContent: "center" }}>
+          {future ? <svg width="20" height="20" viewBox="0 0 24 24" fill="none"><rect x="3.5" y="5" width="17" height="15.5" rx="2.5" stroke="#E24D3A" strokeWidth="1.8" /><path d="M3.5 9.5h17M8 3.5v3M16 3.5v3" stroke="#E24D3A" strokeWidth="1.8" strokeLinecap="round" /></svg>
+                  : <svg width="20" height="20" viewBox="0 0 20 20"><path d="M4 10.5 8 14.5 16 5.5" stroke="#6BBF59" strokeWidth="2.4" fill="none" strokeLinecap="round" strokeLinejoin="round" /></svg>}
+        </div>
+        <div style={{ flex: 1, minWidth: 0 }}><div style={{ fontSize: 15, fontWeight: 700 }}>{v.gym?.name}</div><div style={{ fontSize: 12, color: "#514C44", marginTop: 2 }}>{fmtDate(v.date)} · {v.source === "VOTE" ? "투표 확정" : "직접 추가"}{typeof v.attendeeCount === "number" && v.attendeeCount > 0 ? ` · ${v.attendeeCount}명 가요` : ""}</div></div>
+        {v.mine && <span style={{ fontSize: 11, fontWeight: 800, color: "#2E6B22", background: "#CDEBD4", border: "1.5px solid #2E6B22", borderRadius: 999, padding: "3px 9px", flexShrink: 0 }}>내가 가요</span>}
       </div>
-      <div style={{ flex: 1, minWidth: 0 }}><div style={{ fontSize: 15, fontWeight: 700 }}>{v.gym.name}</div><div style={{ fontSize: 12, color: "#514C44", marginTop: 2 }}>{fmtDate(v.date)} · {v.source === "VOTE" ? "투표 확정" : "방문 기록"}</div></div>
+      {future && (
+        <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+          <button onClick={() => attendVisit(v, !v.mine)} style={{ flex: 1, height: 40, border: `2px solid ${INK}`, borderRadius: WOBS[2], background: v.mine ? "#FFFEFA" : HILITE, fontSize: 14, fontWeight: 700, cursor: "pointer" }}>{v.mine ? "안 갈래요" : "나도 갈래요"}</button>
+          {canEdit && <button onClick={() => openVisitEdit(v)} style={{ height: 40, padding: "0 14px", border: `2px solid ${INK}`, borderRadius: WOBS[2], background: "#FFFEFA", fontSize: 14, fontWeight: 700, cursor: "pointer" }}>변경</button>}
+          {canEdit && <button onClick={() => { if (typeof window !== "undefined" && window.confirm("이 일정을 취소할까요?")) cancelVisit(v); }} style={{ height: 40, padding: "0 14px", border: "2px solid #C23A24", borderRadius: WOBS[2], background: "#FFFEFA", color: "#C23A24", fontSize: 14, fontWeight: 700, cursor: "pointer" }}>취소</button>}
+        </div>
+      )}
     </div>
-  );
+    );
+  };
 
   // 암장 상세
   const sg = gymDetail ? { name: gymDetail.name, loc: gymDetail.address || "", rating: gymDetail.rating?.avg ?? 0, reviews: gymDetail.rating?.count ?? 0, weeks: gymDetail.recency?.weeksSinceVisit ?? null, ever: !!gymDetail.recency?.everVisited, due: !!gymDetail.recency?.dueForReset, cycle: gymDetail.resetCycleWeeks ?? 4, hasSet: !!(gymDetail.settings?.length), color: gymById(selGym)?.color || "#E24D3A", initial: (gymDetail.name || "?")[0], instagram: gymDetail.instagram, settingId: gymDetail.settings?.[0]?.id ?? null } : null;
@@ -917,9 +974,9 @@ export default function ClimbCrewApp() {
                 </div>
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(7,1fr)", textAlign: "center", fontSize: 11, color: "#514C44", marginBottom: 8 }}>{WD.map((d) => <div key={d}>{d}</div>)}</div>
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(7,1fr)", rowGap: 6, fontSize: 14 }}>{calCells.map((c) => <div key={c.key} style={c.style}>{c.day}</div>)}</div>
-                <div style={{ display: "flex", gap: 16, marginTop: 14, paddingTop: 14, borderTop: "2px dashed rgba(58,54,51,0.25)", fontSize: 14, fontWeight: 700, color: "#443F38" }}><div style={{ display: "flex", alignItems: "center", gap: 6 }}><span style={{ width: 13, height: 13, borderRadius: "56% 44% 52% 48% / 48% 52% 44% 56%", background: hatch(CRAYON.green), border: `1.5px solid ${INK}`, display: "inline-block" }} />간 날</div><div style={{ display: "flex", alignItems: "center", gap: 6 }}><span style={{ width: 13, height: 13, borderRadius: "52% 48% 46% 54%", border: "2px solid #E24D3A", display: "inline-block" }} />오늘</div></div>
+                <div style={{ display: "flex", gap: 14, marginTop: 14, paddingTop: 14, borderTop: "2px dashed rgba(58,54,51,0.25)", fontSize: 13, fontWeight: 700, color: "#443F38", flexWrap: "wrap" }}><div style={{ display: "flex", alignItems: "center", gap: 6 }}><span style={{ width: 13, height: 13, borderRadius: "56% 44% 52% 48% / 48% 52% 44% 56%", background: hatch(CRAYON.green), border: `1.5px solid ${INK}`, display: "inline-block" }} />내 일정</div><div style={{ display: "flex", alignItems: "center", gap: 6 }}><span style={{ width: 13, height: 13, borderRadius: "56% 44% 52% 48% / 48% 52% 44% 56%", border: "2px dashed #2E6B22", display: "inline-block" }} />크루 일정</div><div style={{ display: "flex", alignItems: "center", gap: 6 }}><span style={{ width: 13, height: 13, borderRadius: "52% 48% 46% 54%", border: "2px solid #E24D3A", display: "inline-block" }} />오늘</div></div>
               </div>
-              {visits.length === 0 && <div style={{ padding: "22px 16px 0" }}><div style={{ padding: 14, ...cardStyle, color: "#514C44", fontSize: 13 }}>방문 기록이 아직 없어요.</div></div>}
+              {visits.length === 0 && <div style={{ padding: "22px 16px 0" }}><div style={{ padding: 14, ...cardStyle, color: "#514C44", fontSize: 13 }}>클라이밍 일정이 아직 없어요. 투표로 잡아보세요!</div></div>}
               {futureVisits.length > 0 && (
                 <div style={{ padding: "22px 16px 0" }}>
                   <div style={{ ...sectionLabel, marginBottom: 10 }}>다가오는 일정</div>
@@ -928,7 +985,7 @@ export default function ClimbCrewApp() {
               )}
               {pastVisits.length > 0 && (
                 <div style={{ padding: "22px 16px 0" }}>
-                  <div style={{ ...sectionLabel, marginBottom: 10 }}>지난 방문</div>
+                  <div style={{ ...sectionLabel, marginBottom: 10 }}>지난 클라이밍</div>
                   <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>{pastVisits.slice(0, 8).map((v) => visitRow(v, false))}</div>
                 </div>
               )}
@@ -1298,6 +1355,32 @@ export default function ClimbCrewApp() {
                 {!manageQ.trim() && manageHomeIds.length === 0 && <div style={{ padding: 14, color: "#514C44", fontSize: 14, textAlign: "center" }}>검색해서 홈 암장을 골라보세요</div>}
               </div>
               <button onClick={saveHomeGyms} style={{ width: "100%", height: 50, marginTop: 12, flexShrink: 0, fontSize: 17, fontWeight: 700, ...crayonBtn(CRAYON.red, 0) }}>저장</button>
+            </div>
+          </>
+        )}
+        {visitEdit && (
+          <>
+            <div onClick={() => setVisitEdit(null)} style={{ position: "absolute", inset: 0, background: "rgba(28,28,26,0.42)", zIndex: 120, animation: "ccfade .2s ease" }} />
+            <div style={{ position: "absolute", left: 0, right: 0, bottom: 0, zIndex: 130, background: "#FFFEFA", borderTop: `2.5px solid ${INK}`, borderRadius: "28px 22px 0 0 / 24px 28px 0 0", padding: "10px 16px 24px", boxShadow: "0 -8px 30px rgba(58,54,51,0.16)", animation: "ccsheet .28s cubic-bezier(.2,.8,.2,1)", display: "flex", flexDirection: "column", maxHeight: "84%" }}>
+              <div style={{ width: 44, height: 4, borderRadius: 999, background: "rgba(58,54,51,0.3)", margin: "6px auto 12px", transform: "rotate(-1deg)" }} />
+              <div style={{ fontSize: 18, fontWeight: 800, margin: "0 4px 12px" }}>일정 변경</div>
+              <div style={{ fontSize: 13, fontWeight: 700, color: "#514C44", marginBottom: 6 }}>날짜</div>
+              <input type="date" value={visitEditDate} onChange={(e) => setVisitEditDate(e.target.value)} style={{ height: 46, border: `2px solid ${INK}`, borderRadius: WOBS[2], padding: "0 12px", fontSize: 15, background: "#fff", outline: "none", flexShrink: 0 }} />
+              <div style={{ fontSize: 13, fontWeight: 700, color: "#514C44", margin: "14px 0 6px" }}>암장</div>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, height: 46, padding: "0 14px", flexShrink: 0, background: "#fff", border: `2px solid ${INK}`, borderRadius: WOBS[2] }}>
+                <svg width="17" height="17" viewBox="0 0 20 20" fill="none"><circle cx="9" cy="9" r="6.2" stroke="#514C44" strokeWidth="1.8" /><path d="M14 14l4 4" stroke="#514C44" strokeWidth="1.8" strokeLinecap="round" /></svg>
+                <input value={visitEditGymQ} onChange={(e) => setVisitEditGymQ(e.target.value)} placeholder="암장 검색 (안 바꾸면 그대로)" style={{ flex: 1, border: "none", background: "transparent", outline: "none", fontSize: 15, minWidth: 0 }} />
+                {visitEditGymQ && <div onClick={() => setVisitEditGymQ("")} style={{ cursor: "pointer", padding: 4 }}><svg width="14" height="14" viewBox="0 0 14 14"><path d="M2 2l10 10M12 2 2 12" stroke="#514C44" strokeWidth="2" strokeLinecap="round" /></svg></div>}
+              </div>
+              <div style={{ flex: 1, overflowY: "auto", marginTop: 10, display: "flex", flexDirection: "column", gap: 8, minHeight: 100 }}>
+                {(visitEditGymQ.trim() ? allGymsList.filter((g: Any) => (g.name + " " + (g.address || "")).toLowerCase().includes(visitEditGymQ.trim().toLowerCase())) : allGymsList.filter((g: Any) => g.id === visitEditGymId)).slice(0, 30).map((g: Any) => { const sel = g.id === visitEditGymId; return (
+                  <div key={g.id} onClick={() => setVisitEditGymId(g.id)} style={{ ...rowStyle(sel), flexShrink: 0 }}>
+                    <div style={boxStyle(sel)}>{sel ? "✓" : ""}</div>
+                    <div style={{ flex: 1, minWidth: 0 }}><div style={{ fontSize: 15, fontWeight: 600 }}>{g.name}</div><div style={{ fontSize: 12, color: "#514C44", marginTop: 2 }}>{g.address || ""}</div></div>
+                  </div>
+                ); })}
+              </div>
+              <button onClick={saveVisitEdit} style={{ width: "100%", height: 50, marginTop: 12, flexShrink: 0, fontSize: 17, fontWeight: 700, ...crayonBtn(CRAYON.red, 0) }}>변경 저장</button>
             </div>
           </>
         )}

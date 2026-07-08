@@ -65,6 +65,6 @@ export async function POST(req: Request, { params }: { params: Promise<{ crewId:
     },
   });
 
-  emitCrew(crewId, { type: "visit_created", visitId: visit.id, gymName: visit.gym.name });
+  emitCrew(crewId, { type: "visit_created", visitId: visit.id, gymName: visit.gym.name, userId });
   return json({ ...visit, mine: true, attendeeCount: visit.attendees.length }, 201);
 }

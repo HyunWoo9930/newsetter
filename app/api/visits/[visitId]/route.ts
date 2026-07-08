@@ -54,7 +54,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ visitI
     },
   });
 
-  emitCrew(visit.crewId, { type: "visit_updated", visitId, gymName: updated.gym.name });
+  emitCrew(visit.crewId, { type: "visit_updated", visitId, gymName: updated.gym.name, userId });
   return json({ ...updated, mine: updated.attendees.some((a) => a.userId === userId), attendeeCount: updated.attendees.length });
 }
 
@@ -69,6 +69,6 @@ export async function DELETE(_req: Request, { params }: { params: Promise<{ visi
   const { visit } = res;
 
   await prisma.visit.delete({ where: { id: visitId } });
-  emitCrew(visit.crewId, { type: "visit_canceled", visitId, gymName: visit.gym.name });
+  emitCrew(visit.crewId, { type: "visit_canceled", visitId, gymName: visit.gym.name, userId });
   return json({ ok: true });
 }

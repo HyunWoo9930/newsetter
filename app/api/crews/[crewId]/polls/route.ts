@@ -57,7 +57,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ crewId:
     },
     include: { dateOptions: true, gymOptions: { include: { gym: true } } },
   });
-  emitCrew(crewId, { type: "poll_created", pollId: poll.id, title: poll.title });
+  emitCrew(crewId, { type: "poll_created", pollId: poll.id, title: poll.title, userId });
   return json(poll, 201);
 }
 
