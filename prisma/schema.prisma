@@ -1,5 +1,6 @@
 generator client {
-  provider = "prisma-client-js"
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "linux-musl-arm64-openssl-3.0.x"]
 }
 
 datasource db {
@@ -64,6 +65,8 @@ model User {
   climbLogs       ClimbLog[]
   colorGradeVotes ColorGradeVote[]
   createdProblems Problem[]          @relation("ProblemCreator")
+  createdVisits   Visit[]            @relation("VisitCreator")
+  visitAttendance VisitAttendee[]
 }
 
 model Crew {
@@ -161,13 +164,30 @@ model Visit {
   gymSettingId String?
   date         DateTime
   source       VisitSource @default(MANUAL)
+  createdById  String?
   createdAt    DateTime    @default(now())
 
-  crew       Crew        @relation(fields: [crewId], references: [id], onDelete: Cascade)
-  gym        Gym         @relation(fields: [gymId], references: [id], onDelete: Cascade)
-  gymSetting GymSetting? @relation(fields: [gymSettingId], references: [id])
+  crew       Crew            @relation(fields: [crewId], references: [id], onDelete: Cascade)
+  gym        Gym             @relation(fields: [gymId], references: [id], onDelete: Cascade)
+  gymSetting GymSetting?     @relation(fields: [gymSettingId], references: [id])
+  createdBy  User?           @relation("VisitCreator", fields: [createdById], references: [id])
+  attendees  VisitAttendee[]
 
   @@index([crewId, gymId, date])
+}
+
+// 확정된 일정에 "간다"고 표시한 사람들 (참여하기)
+model VisitAttendee {
+  id        String   @id @default(cuid())
+  visitId   String
+  userId    String
+  createdAt DateTime @default(now())
+
+  visit Visit @relation(fields: [visitId], references: [id], onDelete: Cascade)
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([visitId, userId])
+  @@index([userId])
 }
 
 model Poll {

@@ -34,6 +34,11 @@ export const api = {
   recommendations: (settingId: string, growth: boolean) =>
     fetch(`/api/gym-settings/${settingId}/recommendations${growth ? "?growth=1" : ""}`).then(j),
 
+  // 일정(방문) 참여/변경/취소
+  visitAttend: (visitId: string, going: boolean) => fetch(`/api/visits/${visitId}/attend`, jsonInit("PUT", { going })).then(j),
+  visitUpdate: (visitId: string, body: { gymId?: string; date?: string }) => fetch(`/api/visits/${visitId}`, jsonInit("PATCH", body)).then(j),
+  visitCancel: (visitId: string) => fetch(`/api/visits/${visitId}`, { method: "DELETE" }).then(j),
+
   post: <T = unknown>(path: string, body: unknown) => fetch(path, jsonInit("POST", body)).then<T>(j),
   patch: <T = unknown>(path: string, body: unknown) => fetch(path, jsonInit("PATCH", body)).then<T>(j),
   put: <T = unknown>(path: string, body: unknown) => fetch(path, jsonInit("PUT", body)).then<T>(j),

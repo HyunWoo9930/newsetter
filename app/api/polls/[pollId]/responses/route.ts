@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { getCurrentUserId } from "@/lib/auth";
 import { json, error, unauthorized, forbidden, notFound, parseBody } from "@/lib/http";
 import { getApprovedMembership } from "@/lib/crew";
+import { emitCrew } from "@/lib/events";
 
 const schema = z.object({
   dateOptionIds: z.array(z.string()).default([]),
@@ -46,5 +47,6 @@ export async function POST(req: Request, { params }: { params: Promise<{ pollId:
     }),
   ]);
 
+  emitCrew(poll.crewId, { type: "vote_submitted", pollId, userId });
   return json({ ok: true, dateOptionIds, gymOptionIds });
 }

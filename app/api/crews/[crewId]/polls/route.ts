@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { getCurrentUserId } from "@/lib/auth";
 import { json, error, unauthorized, forbidden, parseBody } from "@/lib/http";
 import { getApprovedMembership } from "@/lib/crew";
+import { emitCrew } from "@/lib/events";
 
 // 날짜는 YYYY-MM-DD 로 받아 UTC 자정으로 고정 (타임존 밀림 방지)
 const dayStr = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "날짜 형식이 올바르지 않아요");
@@ -56,6 +57,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ crewId:
     },
     include: { dateOptions: true, gymOptions: { include: { gym: true } } },
   });
+  emitCrew(crewId, { type: "poll_created", pollId: poll.id, title: poll.title });
   return json(poll, 201);
 }
 

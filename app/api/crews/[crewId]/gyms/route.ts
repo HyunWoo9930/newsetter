@@ -17,9 +17,10 @@ export async function GET(_req: Request, { params }: { params: Promise<{ crewId:
     prisma.gym.findMany({
       include: { settings: { orderBy: { setDate: "desc" }, take: 1 } },
     }),
+    // #6 실제로 "간" 방문만(오늘까지) 최근방문으로 계산. 미래 예정 일정은 아직 안 간 것.
     prisma.visit.groupBy({
       by: ["gymId"],
-      where: { crewId },
+      where: { crewId, date: { lte: new Date() } },
       _max: { date: true },
     }),
     prisma.review.groupBy({ by: ["gymId"], _avg: { rating: true }, _count: true }),

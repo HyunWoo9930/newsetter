@@ -4,8 +4,9 @@ import { getCurrentUserId } from "@/lib/auth";
 import { json, unauthorized, forbidden, notFound, parseBody } from "@/lib/http";
 import { getApprovedMembership } from "@/lib/crew";
 import { settingIdForVisit } from "@/lib/gym";
+import { emitCrew } from "@/lib/events";
 
-// 크루 방문 기록 목록 (캘린더용)
+// 크루 클라이밍 일정 목록 (캘린더용) — 참석자 + 내가 가는지 포함
 export async function GET(_req: Request, { params }: { params: Promise<{ crewId: string }> }) {
   const userId = await getCurrentUserId();
   if (!userId) return unauthorized();
@@ -15,11 +16,21 @@ export async function GET(_req: Request, { params }: { params: Promise<{ crewId:
 
   const visits = await prisma.visit.findMany({
     where: { crewId },
-    include: { gym: { select: { id: true, name: true } } },
+    include: {
+      gym: { select: { id: true, name: true } },
+      attendees: { include: { user: { select: { id: true, nickname: true, profileImg: true } } } },
+    },
     orderBy: { date: "desc" },
     take: 200,
   });
-  return json(visits);
+
+  return json(
+    visits.map((v) => ({
+      ...v,
+      mine: v.attendees.some((a) => a.userId === userId), // #5 내가 가는 일정인지
+      attendeeCount: v.attendees.length,
+    }))
+  );
 }
 
 const schema = z.object({
@@ -27,7 +38,7 @@ const schema = z.object({
   date: z.coerce.date(),
 });
 
-// 방문 기록 수동 추가
+// 방문/일정 수동 추가 (추가한 사람이 생성자 & 자동 참석)
 export async function POST(req: Request, { params }: { params: Promise<{ crewId: string }> }) {
   const userId = await getCurrentUserId();
   if (!userId) return unauthorized();
@@ -44,8 +55,16 @@ export async function POST(req: Request, { params }: { params: Promise<{ crewId:
 
   const settingId = await settingIdForVisit(gymId, date);
   const visit = await prisma.visit.create({
-    data: { crewId, gymId, gymSettingId: settingId, date, source: "MANUAL" },
-    include: { gym: { select: { id: true, name: true } } },
+    data: {
+      crewId, gymId, gymSettingId: settingId, date, source: "MANUAL", createdById: userId,
+      attendees: { create: { userId } },
+    },
+    include: {
+      gym: { select: { id: true, name: true } },
+      attendees: { include: { user: { select: { id: true, nickname: true, profileImg: true } } } },
+    },
   });
-  return json(visit, 201);
+
+  emitCrew(crewId, { type: "visit_created", visitId: visit.id, gymName: visit.gym.name });
+  return json({ ...visit, mine: true, attendeeCount: visit.attendees.length }, 201);
 }

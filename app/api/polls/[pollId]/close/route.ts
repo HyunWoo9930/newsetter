@@ -3,9 +3,10 @@ import { getCurrentUserId } from "@/lib/auth";
 import { json, error, unauthorized, forbidden, notFound } from "@/lib/http";
 import { getApprovedMembership } from "@/lib/crew";
 import { settingIdForVisit } from "@/lib/gym";
+import { emitCrew } from "@/lib/events";
 
-// 투표 마감 → 최다 득표 (날짜 + 암장) 확정 → 방문 기록 자동 생성.
-// 크루장 또는 투표 생성자만 마감 가능.
+// 투표 마감 → 최소 불가표(날짜) + 최다 선호(암장) 확정 → 방문(일정) 자동 생성.
+// 투표를 만든 사람만 마감 가능.
 export async function POST(_req: Request, { params }: { params: Promise<{ pollId: string }> }) {
   const userId = await getCurrentUserId();
   if (!userId) return unauthorized();
@@ -14,15 +15,16 @@ export async function POST(_req: Request, { params }: { params: Promise<{ pollId
   const poll = await prisma.poll.findUnique({
     where: { id: pollId },
     include: {
-      dateOptions: { include: { _count: { select: { votes: true } } } },
+      dateOptions: { include: { _count: { select: { votes: true } }, votes: { select: { userId: true } } } },
       gymOptions: { include: { _count: { select: { votes: true } } } },
     },
   });
   if (!poll) return notFound("투표");
   if (poll.status === "CLOSED") return error("이미 마감된 투표입니다", 409);
-
-  // 일단은 모든 크루원이 마감할 수 있게 (권한 분기는 추후)
   if (!(await getApprovedMembership(poll.crewId, userId))) return forbidden();
+
+  // #1 투표를 만든 사람만 마감 가능
+  if (poll.creatorId !== userId) return error("투표를 만든 사람만 마감할 수 있어요", 403);
 
   if (poll.dateOptions.length === 0) {
     return error("날짜 후보가 없어 확정할 수 없습니다", 422);
@@ -58,9 +60,26 @@ export async function POST(_req: Request, { params }: { params: Promise<{ pollId
         gymSettingId: settingId,
         date: winnerDate.date,
         source: "VOTE",
+        createdById: userId,
       },
     });
+
+    // #4 확정된 날짜에 X(불가) 안 한 승인 크루원을 자동 참석으로 등록
+    const xedUsers = new Set(winnerDate.votes.map((v) => v.userId));
+    const members = await prisma.crewMember.findMany({
+      where: { crewId: poll.crewId, status: "APPROVED" },
+      select: { userId: true },
+    });
+    const goingUserIds = members.map((m) => m.userId).filter((uid) => !xedUsers.has(uid));
+    if (goingUserIds.length) {
+      await prisma.visitAttendee.createMany({
+        data: goingUserIds.map((uid) => ({ visitId: visit!.id, userId: uid })),
+        skipDuplicates: true,
+      });
+    }
   }
+
+  emitCrew(poll.crewId, { type: "poll_closed", pollId, title: poll.title, visitId: visit?.id ?? null });
 
   return json({ poll: updatedPoll, visit });
 }
