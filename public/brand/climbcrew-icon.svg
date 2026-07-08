@@ -1,7 +1,10 @@
 <svg width="512" height="512" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
-  <rect width="512" height="512" rx="112" fill="#F0663C"/>
-  <g transform="translate(73.75 87.25) scale(9)" fill="none" stroke="#ffffff" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round">
-    <path d="M9 30 18 12l5 9 4-6 4 15"/>
-    <circle cx="28.5" cy="10.5" r="3" fill="#ffffff" stroke="none"/>
-  </g>
+  <!-- 직사각형 배경 (코럴 레드, 각진 모서리) -->
+  <rect x="0" y="0" width="512" height="512" fill="#EC6A5A"/>
+  <!-- 손그림 테두리 (각진 사각 프레임) -->
+  <rect x="14" y="14" width="484" height="484" fill="none" stroke="#3A3633" stroke-width="12"/>
+  <!-- 손그림 산봉우리 (흰 선) -->
+  <path d="M126 360 L222 150 L288 242 L336 180 L386 360" fill="none" stroke="#FFFDF6" stroke-width="30" stroke-linecap="round" stroke-linejoin="round"/>
+  <!-- 해 (흰 점) -->
+  <circle cx="392" cy="150" r="25" fill="#FFFDF6"/>
 </svg>

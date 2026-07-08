@@ -167,13 +167,20 @@ export default function ClimbCrewApp() {
   const openProb = (id: string) => { setHist((h) => [...h, screen]); setSelProb(id); setScreen("probDetail"); };
 
   /* ===== 데이터 로딩 ===== */
+  // 공개 데이터 + 초대코드 (마운트 1회)
   useEffect(() => {
-    api.me().then(setMe).catch(() => {});
-    api.crews().then((cs: Any) => { setCrews(cs); if (cs[0]) setActiveCrewId(cs[0].id); }).catch(() => {}).finally(() => setBootstrapped(true));
     api.gymsList().then(setAllGymsList).catch(() => {});
     const inv = new URLSearchParams(window.location.search).get("invite");
     if (inv) { setJoinCode(inv); setInvitePending(true); }
   }, []);
+
+  // 세션이 확정되면(카카오 로그인 완료 포함) 내 정보·크루를 다시 불러온다.
+  // 로그인 전 한 번 빈 결과를 받아도 로그인 후 재조회되도록 status 의존.
+  useEffect(() => {
+    if (status === "loading") return;
+    api.me().then(setMe).catch(() => setMe(null));
+    api.crews().then((cs: Any) => { setCrews(cs); setActiveCrewId((prev) => prev ?? (cs[0]?.id ?? null)); }).catch(() => {}).finally(() => setBootstrapped(true));
+  }, [status]);
 
   // 카카오톡 공유 SDK (JS 키가 있을 때만 로드)
   useEffect(() => {
@@ -534,7 +541,7 @@ export default function ClimbCrewApp() {
 
           {is("login") && (
             <div style={{ minHeight: "100%", display: "flex", flexDirection: "column", justifyContent: "center", alignItems: "center", padding: "0 32px", animation: "ccfade .3s ease" }}>
-              <div style={{ width: 80, height: 80, borderRadius: "60% 45% 55% 50% / 50% 60% 45% 58%", background: hatch(CRAYON.red), border: `2.5px solid ${INK}`, display: "flex", alignItems: "center", justifyContent: "center", transform: "rotate(-4deg)" }}><svg width="42" height="42" viewBox="0 0 40 40" fill="none"><path d="M9 30 18 12l5 9 4-6 4 15" stroke="#fff" strokeWidth="3.2" strokeLinecap="round" strokeLinejoin="round" /><circle cx="28.5" cy="10.5" r="3" fill="#fff" /></svg></div>
+              <img src="/brand/climbcrew-icon.svg" alt="뉴세터" width={96} height={96} style={{ display: "block", width: 96, height: 96, transform: "rotate(-3deg)", filter: "drop-shadow(3px 4px 0 rgba(58,54,51,0.18))" }} />
               <div style={{ fontSize: 34, fontWeight: 700, marginTop: 20 }}>뉴세터</div>
               <div style={{ position: "relative", fontSize: 17, color: "#6E675C", marginTop: 4, fontWeight: 700 }}>우리 크루의 클라이밍, 한곳에서<svg viewBox="0 0 120 8" preserveAspectRatio="none" style={{ position: "absolute", left: 0, right: 0, bottom: -7, width: "100%", height: 8 }}><path d="M2 5 C20 2 35 7 55 4 S95 6 118 3" fill="none" stroke={`rgba(${CRAYON.orange},0.85)`} strokeWidth="3" strokeLinecap="round" /></svg></div>
               <div style={{ height: 56 }} />
@@ -881,7 +888,7 @@ export default function ClimbCrewApp() {
               <div style={{ padding: "22px 16px 0" }}><div style={{ ...cardStyle, overflow: "hidden" }}>
                 <div onClick={() => showToast("알림 설정은 준비 중이에요")} style={{ display: "flex", alignItems: "center", gap: 8, padding: "15px 16px", borderBottom: "2px dashed rgba(58,54,51,0.2)", cursor: "pointer" }}><div style={{ flex: 1, fontSize: 15, color: "#78756B" }}>알림 설정</div><div style={{ fontSize: 11, fontWeight: 700, color: "#78756B", background: "#F3EEDF", padding: "3px 9px", borderRadius: 999 }}>준비 중</div></div>
                 <div onClick={openCrewManage} style={{ display: "flex", alignItems: "center", gap: 8, padding: "15px 16px", borderBottom: "2px dashed rgba(58,54,51,0.2)", cursor: "pointer" }}><svg width="19" height="19" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="3" stroke={INK} strokeWidth="1.8" /><path d="M12 3.5v2M12 18.5v2M3.5 12h2M18.5 12h2M6 6l1.4 1.4M16.6 16.6 18 18M18 6l-1.4 1.4M7.4 16.6 6 18" stroke={INK} strokeWidth="1.8" strokeLinecap="round" /></svg><div style={{ flex: 1, fontSize: 15, fontWeight: 700 }}>크루 관리</div><div style={{ fontSize: 12, color: "#78756B" }}>멤버 · 초대 · 홈 암장</div><ChevR /></div>
-                <div onClick={() => { if (status === "authenticated") signOut({ redirect: false }); tab("login"); }} style={{ display: "flex", alignItems: "center", padding: "15px 16px", cursor: "pointer" }}><div style={{ flex: 1, fontSize: 15, color: "#D14343" }}>로그아웃</div></div>
+                <div onClick={async () => { if (status === "authenticated") await signOut({ redirect: false }); setCrews([]); setActiveCrewId(null); tab("login"); }} style={{ display: "flex", alignItems: "center", padding: "15px 16px", cursor: "pointer" }}><div style={{ flex: 1, fontSize: 15, color: "#D14343" }}>로그아웃</div></div>
               </div></div>
             </div>
           )}
