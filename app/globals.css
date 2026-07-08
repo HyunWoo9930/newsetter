@@ -6,7 +6,7 @@
 
 :root {
   --background: #efe9da; /* 책상 위 */
-  --foreground: #3a3633; /* 연필 흑연 */
+  --foreground: #2B2825; /* 연필 흑연 */
 }
 
 html,
@@ -15,8 +15,16 @@ body {
   padding: 0;
   background: var(--background);
   color: var(--foreground);
-  -webkit-font-smoothing: antialiased;
+  /* Gaegu(개구쟁이체)는 400이 얇아 잘 안 보임 → 기본을 700(볼드)로. 렌더링도 또렷하게. */
+  font-weight: 700;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: auto;
   font-family: "Gaegu", "Pretendard Variable", Pretendard, -apple-system, system-ui, sans-serif;
+}
+
+/* 얇게(400) 지정된 곳도 최소 600 이상으로 끌어올려 가독성 확보 */
+body :where([style*="font-weight: 400"], [style*="font-weight:400"]) {
+  font-weight: 600 !important;
 }
 
 * {
@@ -58,7 +66,7 @@ body {
   max-width: 440px;
   height: 100%;
   background: #fffdf6; /* 스케치북 종이 */
-  color: #3a3633;
+  color: #2B2825;
   overflow: hidden;
 }
 @media (min-width: 480px) {

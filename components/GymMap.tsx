@@ -7,7 +7,7 @@ type Any = any;
 export type MapGym = { id: string; name: string; lat: number | null; lng: number | null; due: boolean; color: string };
 
 const CLIENT_ID = process.env.NEXT_PUBLIC_NAVER_MAP_CLIENT_ID;
-const INK = "#3A3633";
+const INK = "#2B2825";
 // 색은 브랜드(프랜차이즈) 기준으로 부모에서 지정 → 같은 체인끼리 같은 색
 const hatch = (rgb: string) => `repeating-linear-gradient(48deg, rgba(${rgb},0.95) 0 3px, rgba(${rgb},0.7) 3px 5px, rgba(${rgb},0.9) 5px 7px)`;
 
