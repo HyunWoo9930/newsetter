@@ -1,0 +1,16 @@
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: climbcrew-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: climbcrew
+      POSTGRES_PASSWORD: climbcrew
+      POSTGRES_DB: climbcrew
+    ports:
+      - "5432:5432"
+    volumes:
+      - climbcrew-pgdata:/var/lib/postgresql/data
+
+volumes:
+  climbcrew-pgdata:

@@ -1,0 +1,340 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum CrewRole {
+  LEADER
+  MEMBER
+}
+
+enum MemberStatus {
+  PENDING
+  APPROVED
+}
+
+enum JoinVia {
+  INVITE_LINK
+  REQUEST
+}
+
+enum VisitSource {
+  VOTE
+  MANUAL
+}
+
+enum PollStatus {
+  OPEN
+  CLOSED
+}
+
+// 그 색(난이도) 기준 체감
+enum RelativeFeel {
+  EASIER
+  AS_EXPECTED
+  HARDER
+}
+
+model User {
+  id             String   @id @default(cuid())
+  kakaoId        String?  @unique
+  nickname       String
+  profileImg     String?
+  createdAt      DateTime @default(now())
+
+  // 개인화 기준점
+  homeGymId      String?
+  referenceColor String?
+  referenceGrade Int?
+
+  memberships     CrewMember[]
+  ledCrews        Crew[]             @relation("CrewLeader")
+  createdPolls    Poll[]             @relation("PollCreator")
+  dateVotes       PollDateVote[]
+  gymVotes        PollGymVote[]
+  reviews         Review[]
+  reportedSets    GymSetting[]       @relation("SettingReporter")
+  favorites       GymFavorite[]
+  pushSubs        PushSubscription[]
+  homeGym         Gym?               @relation("UserHomeGym", fields: [homeGymId], references: [id])
+  climbLogs       ClimbLog[]
+  colorGradeVotes ColorGradeVote[]
+  createdProblems Problem[]          @relation("ProblemCreator")
+}
+
+model Crew {
+  id          String   @id @default(cuid())
+  name        String
+  description String?
+  region      String?
+  inviteCode  String   @unique
+  openChatUrl String?
+  leaderId    String
+  createdAt   DateTime @default(now())
+
+  leader   User          @relation("CrewLeader", fields: [leaderId], references: [id])
+  members  CrewMember[]
+  polls    Poll[]
+  visits   Visit[]
+  homeGyms CrewHomeGym[]
+}
+
+// 크루의 홈 암장 (자주 가는 곳). 크루 생성 시 몇 곳 지정.
+model CrewHomeGym {
+  id     String @id @default(cuid())
+  crewId String
+  gymId  String
+
+  crew Crew @relation(fields: [crewId], references: [id], onDelete: Cascade)
+  gym  Gym  @relation(fields: [gymId], references: [id], onDelete: Cascade)
+
+  @@unique([crewId, gymId])
+}
+
+model CrewMember {
+  id        String       @id @default(cuid())
+  crewId    String
+  userId    String
+  role      CrewRole     @default(MEMBER)
+  status    MemberStatus @default(APPROVED)
+  joinedVia JoinVia      @default(INVITE_LINK)
+  createdAt DateTime     @default(now())
+
+  crew Crew @relation(fields: [crewId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([crewId, userId])
+  @@index([crewId, status])
+}
+
+model Gym {
+  id              String   @id @default(cuid())
+  name            String
+  address         String?
+  lat             Float?
+  lng             Float?
+  resetCycleWeeks Int      @default(4)
+  gradeSystem     String?
+  instagram       String?
+  createdAt       DateTime @default(now())
+
+  settings        GymSetting[]
+  visits          Visit[]
+  reviews         Review[]
+  favorites       GymFavorite[]
+  pollGymOptions  PollGymOption[]
+  colorGradeVotes ColorGradeVote[]
+  homeUsers       User[]           @relation("UserHomeGym")
+  crewHomeGyms    CrewHomeGym[]
+
+  @@index([name])
+}
+
+// 세팅 회차(뉴셋). 유저 제보로 생성.
+model GymSetting {
+  id           String   @id @default(cuid())
+  gymId        String
+  setDate      DateTime
+  noticeUrl    String?
+  reportedById String?
+  createdAt    DateTime @default(now())
+
+  gym        Gym       @relation(fields: [gymId], references: [id], onDelete: Cascade)
+  reportedBy User?     @relation("SettingReporter", fields: [reportedById], references: [id])
+  visits     Visit[]
+  reviews    Review[]
+  problems   Problem[]
+
+  @@index([gymId, setDate])
+}
+
+model Visit {
+  id           String      @id @default(cuid())
+  crewId       String
+  gymId        String
+  gymSettingId String?
+  date         DateTime
+  source       VisitSource @default(MANUAL)
+  createdAt    DateTime    @default(now())
+
+  crew       Crew        @relation(fields: [crewId], references: [id], onDelete: Cascade)
+  gym        Gym         @relation(fields: [gymId], references: [id], onDelete: Cascade)
+  gymSetting GymSetting? @relation(fields: [gymSettingId], references: [id])
+
+  @@index([crewId, gymId, date])
+}
+
+model Poll {
+  id             String     @id @default(cuid())
+  crewId         String
+  creatorId      String
+  title          String
+  deadline       DateTime?
+  status         PollStatus @default(OPEN)
+  rangeStart     DateTime?
+  rangeEnd       DateTime?
+  confirmedDate  DateTime?
+  confirmedGymId String?
+  createdAt      DateTime   @default(now())
+
+  crew        Crew             @relation(fields: [crewId], references: [id], onDelete: Cascade)
+  creator     User             @relation("PollCreator", fields: [creatorId], references: [id])
+  dateOptions PollDateOption[]
+  gymOptions  PollGymOption[]
+  dateVotes   PollDateVote[]
+  gymVotes    PollGymVote[]
+
+  @@index([crewId, status])
+}
+
+model PollDateOption {
+  id     String   @id @default(cuid())
+  pollId String
+  date   DateTime
+  label  String?
+
+  poll  Poll           @relation(fields: [pollId], references: [id], onDelete: Cascade)
+  votes PollDateVote[]
+}
+
+model PollGymOption {
+  id     String @id @default(cuid())
+  pollId String
+  gymId  String
+
+  poll  Poll          @relation(fields: [pollId], references: [id], onDelete: Cascade)
+  gym   Gym           @relation(fields: [gymId], references: [id])
+  votes PollGymVote[]
+
+  @@unique([pollId, gymId])
+}
+
+model PollDateVote {
+  id           String @id @default(cuid())
+  pollId       String
+  userId       String
+  dateOptionId String
+
+  poll       Poll           @relation(fields: [pollId], references: [id], onDelete: Cascade)
+  user       User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  dateOption PollDateOption @relation(fields: [dateOptionId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, dateOptionId])
+  @@index([pollId])
+}
+
+model PollGymVote {
+  id          String @id @default(cuid())
+  pollId      String
+  userId      String
+  gymOptionId String
+
+  poll      Poll          @relation(fields: [pollId], references: [id], onDelete: Cascade)
+  user      User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  gymOption PollGymOption @relation(fields: [gymOptionId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, gymOptionId])
+  @@index([pollId])
+}
+
+model Review {
+  id           String   @id @default(cuid())
+  userId       String
+  gymId        String
+  gymSettingId String?
+  crewId       String?
+  rating       Int
+  tags         String[]
+  content      String?
+  createdAt    DateTime @default(now())
+
+  user       User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  gym        Gym         @relation(fields: [gymId], references: [id], onDelete: Cascade)
+  gymSetting GymSetting? @relation(fields: [gymSettingId], references: [id])
+
+  @@index([gymId, createdAt])
+}
+
+model GymFavorite {
+  id     String @id @default(cuid())
+  userId String
+  gymId  String
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  gym  Gym  @relation(fields: [gymId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, gymId])
+}
+
+model PushSubscription {
+  id        String   @id @default(cuid())
+  userId    String
+  endpoint  String   @unique
+  p256dh    String
+  auth      String
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+// ── 문제 · 완등 로그 · 난이도 정규화 ──────────────────────────────
+
+// 한 세팅 회차의 개별 문제 (색=난이도).
+model Problem {
+  id           String   @id @default(cuid())
+  gymSettingId String
+  color        String
+  grade        Int?     // 명시적 등급이 있으면
+  label        String?  // "빨강 3번" 등 식별용
+  photoUrl     String?
+  createdById  String?
+  createdAt    DateTime @default(now())
+
+  gymSetting GymSetting @relation(fields: [gymSettingId], references: [id], onDelete: Cascade)
+  createdBy  User?      @relation("ProblemCreator", fields: [createdById], references: [id])
+  logs       ClimbLog[]
+
+  @@index([gymSettingId, color])
+}
+
+// 완등 로그 + 베타 + 난이도 신호 + 영상(선택). 유저당 문제당 1개(수정 가능).
+model ClimbLog {
+  id           String        @id @default(cuid())
+  problemId    String
+  userId       String
+  sent         Boolean       @default(false)
+  attempts     Int?
+  relativeFeel RelativeFeel?
+  honey        Boolean       @default(false)
+  content      String?
+  videoUrl     String?
+  videoThumb   String?
+  createdAt    DateTime      @default(now())
+
+  problem Problem @relation(fields: [problemId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([problemId, userId])
+  @@index([problemId])
+  @@index([userId])
+}
+
+// 암장의 색 → 공통 척도(V등급) 추정 투표. 세트를 넘어 영구 누적.
+model ColorGradeVote {
+  id        String   @id @default(cuid())
+  gymId     String
+  color     String
+  userId    String
+  vGrade    Int
+  createdAt DateTime @default(now())
+
+  gym  Gym  @relation(fields: [gymId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([gymId, color, userId])
+  @@index([gymId, color])
+}
