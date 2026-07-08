@@ -10,3 +10,6 @@ build/
 /coverage
 next-env.d.ts
 .claude/settings.local.json
+
+# TS 증분 빌드 캐시
+tsconfig.tsbuildinfo
