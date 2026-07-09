@@ -15,7 +15,9 @@ export async function PUT(req: Request, { params }: { params: Promise<{ visitId:
 
   const visit = await prisma.visit.findUnique({ where: { id: visitId }, select: { id: true, crewId: true } });
   if (!visit) return notFound("일정");
-  if (!(await getApprovedMembership(visit.crewId, userId))) return forbidden();
+  if (!visit.crewId) return forbidden(); // 개인 기록엔 참여 개념이 없음
+  const crewId = visit.crewId;
+  if (!(await getApprovedMembership(crewId, userId))) return forbidden();
 
   const parsed = await parseBody(req, schema);
   if (!parsed.ok) return parsed.response;
@@ -31,6 +33,6 @@ export async function PUT(req: Request, { params }: { params: Promise<{ visitId:
   }
 
   const count = await prisma.visitAttendee.count({ where: { visitId } });
-  emitCrew(visit.crewId, { type: "visit_attend", visitId, userId, going: parsed.data.going });
+  emitCrew(crewId, { type: "visit_attend", visitId, userId, going: parsed.data.going });
   return json({ ok: true, mine: parsed.data.going, attendeeCount: count });
 }

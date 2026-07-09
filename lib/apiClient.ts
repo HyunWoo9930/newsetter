@@ -34,6 +34,11 @@ export const api = {
   recommendations: (settingId: string, growth: boolean) =>
     fetch(`/api/gym-settings/${settingId}/recommendations${growth ? "?growth=1" : ""}`).then(j),
 
+  // 개인 모드 — 내 암장/기록/즐겨찾기
+  meGyms: () => fetch("/api/me/gyms", noStore).then(j),
+  meVisits: () => fetch("/api/me/visits", noStore).then(j),
+  favoriteGym: (gymId: string, favorite: boolean) => fetch(`/api/gyms/${gymId}/favorite`, jsonInit("PUT", { favorite })).then(j),
+
   // 일정(방문) 참여/변경/취소
   visitAttend: (visitId: string, going: boolean) => fetch(`/api/visits/${visitId}/attend`, jsonInit("PUT", { going })).then(j),
   visitUpdate: (visitId: string, body: { gymId?: string; date?: string }) => fetch(`/api/visits/${visitId}`, jsonInit("PATCH", body)).then(j),

@@ -6,17 +6,18 @@ import { getApprovedMembership } from "@/lib/crew";
 import { settingIdForVisit } from "@/lib/gym";
 import { emitCrew } from "@/lib/events";
 
-// 일정 변경/취소 권한: 만든 사람 또는 크루장
+// 일정 변경/취소 권한: 만든 사람 또는 크루장 (개인 기록은 /api/me/visits 로)
 async function loadEditable(visitId: string, userId: string) {
   const visit = await prisma.visit.findUnique({
     where: { id: visitId },
     include: { crew: { select: { id: true, leaderId: true } }, gym: { select: { name: true } } },
   });
   if (!visit) return { err: notFound("일정") } as const;
+  if (!visit.crewId || !visit.crew) return { err: error("개인 기록은 내 기록에서 관리해요", 403) } as const;
   if (!(await getApprovedMembership(visit.crewId, userId))) return { err: forbidden() } as const;
   const canEdit = visit.createdById === userId || visit.crew.leaderId === userId;
   if (!canEdit) return { err: error("만든 사람 또는 크루장만 변경/취소할 수 있어요", 403) } as const;
-  return { visit } as const;
+  return { visit: { ...visit, crewId: visit.crewId } } as const;
 }
 
 const patchSchema = z.object({

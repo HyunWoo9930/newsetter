@@ -78,7 +78,15 @@ npm run dev              # http://localhost:3000
 | GET/POST | `/api/problems/:problemId/logs` | 완등 로그 목록 / 남기기·수정(영상 선택 첨부) |
 | GET/POST | `/api/gyms/:gymId/color-grades` | 색→공통척도(vGrade) 집계 / 투표 (암장 간 보정) |
 | GET | `/api/gym-settings/:settingId/recommendations` | "뭐부터 풀지" 추천 (`?growth=1` 성장 모드) |
-| GET/PATCH | `/api/me` | 내 프로필+실력(θ) / 홈짐·기준등급 수정 |
+| GET/PATCH | `/api/me` | 내 프로필+실력(θ)+개인 통계 / 홈짐·기준등급 수정 |
+
+### 개인 모드 (크루 없이 사용)
+| 메서드 | 경로 | 설명 |
+|---|---|---|
+| GET | `/api/me/gyms` | 개인 기준 암장 목록 (즐겨찾기=홈 역할, 내 방문 recency) |
+| GET/POST | `/api/me/visits` | 내 기록·일정 통합 목록 / 개인 기록 추가 (Visit.crewId=null) |
+| DELETE | `/api/me/visits/:visitId` | 개인 기록 삭제 |
+| PUT | `/api/gyms/:gymId/favorite` | 암장 즐겨찾기 ★ 토글 |
 
 **난이도 로직 위치**: 체감 점수 [lib/difficulty.ts](lib/difficulty.ts) · 실력 추정 [lib/ability.ts](lib/ability.ts) · 색 보정 [lib/colorGrade.ts](lib/colorGrade.ts).
 추천은 v1 규칙기반(내 실력 이하 미완등을 쉬운 순). v2에서 IRT/Elo로 고도화 예정.
@@ -98,6 +106,12 @@ npm run dev              # http://localhost:3000
 4. `.env`에서 `NEXT_PUBLIC_KAKAO_ENABLED="true"` 로 변경 (로그인 버튼이 실제 카카오로 전환)
 5. 운영에선 `DEV_USER_ID` 비우기 → 세션 없으면 로그인 필요
 - 앱 아이콘: `public/brand/climbcrew-icon-512.png` 업로드
+
+## 개인 모드
+- 전환 시트(홈 헤더 탭)에서 "나의 클라이밍" 선택 → 홈·캘린더·탐색이 내 기록·즐겨찾기 기준으로 동작 (URL `?m=me`)
+- 크루 없는 유저는 개인 모드 홈으로 바로 진입 (start 강제 없음) + 크루 만들기/참여 유도 카드
+- 탭바 가운데 버튼이 "기록 추가"로 바뀜 (암장 검색 + 날짜 → 개인 기록)
+- 즐겨찾기 ★ = 개인의 홈 암장 — "가야 할 암장"이 ★ 기준으로 계산
 
 ## MVP 완료 (크루 · 투표 · 방문 · 리뷰)
 - 크루 생성/초대/가입·승인/홈 암장/크루 관리

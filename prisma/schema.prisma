@@ -159,7 +159,7 @@ model GymSetting {
 
 model Visit {
   id           String      @id @default(cuid())
-  crewId       String
+  crewId       String? // null = 개인 기록 (createdById 소유)
   gymId        String
   gymSettingId String?
   date         DateTime
@@ -167,7 +167,7 @@ model Visit {
   createdById  String?
   createdAt    DateTime    @default(now())
 
-  crew       Crew            @relation(fields: [crewId], references: [id], onDelete: Cascade)
+  crew       Crew?           @relation(fields: [crewId], references: [id], onDelete: Cascade)
   gym        Gym             @relation(fields: [gymId], references: [id], onDelete: Cascade)
   gymSetting GymSetting?     @relation(fields: [gymSettingId], references: [id])
   createdBy  User?           @relation("VisitCreator", fields: [createdById], references: [id])

@@ -15,12 +15,22 @@ export async function GET() {
   });
   if (!user) return notFound("유저");
 
-  const [ability, myReviewCount, myLogCount] = await Promise.all([
+  const [ability, myReviewCount, myLogCount, favoriteCount, myVisitCount] = await Promise.all([
     estimateUserAbility(userId),
     prisma.review.count({ where: { userId } }),
     prisma.climbLog.count({ where: { userId } }),
+    prisma.gymFavorite.count({ where: { userId } }),
+    // 내 기록 = 개인 기록 + 내가 참석한 크루 일정
+    prisma.visit.count({
+      where: {
+        OR: [
+          { crewId: null, createdById: userId },
+          { attendees: { some: { userId } } },
+        ],
+      },
+    }),
   ]);
-  return json({ ...user, ability, stats: { myReviewCount, myLogCount } });
+  return json({ ...user, ability, stats: { myReviewCount, myLogCount, favoriteCount, myVisitCount } });
 }
 
 const schema = z.object({

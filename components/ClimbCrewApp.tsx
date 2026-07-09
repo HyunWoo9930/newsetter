@@ -173,14 +173,23 @@ export default function ClimbCrewApp() {
   const [leaveSheetOpen, setLeaveSheetOpen] = useState(false);
   // 지도 키가 없으면 목록이 기본 — 지도 단독 의존 탈피
   const [exploreView, setExploreView] = useState<"map" | "list">(process.env.NEXT_PUBLIC_NAVER_MAP_CLIENT_ID ? "map" : "list");
+  // 개인 모드 — 크루 없이도 내 기록·즐겨찾기로 사용
+  const [mode, setMode] = useState<"crew" | "personal">("crew");
+  const [myGyms, setMyGyms] = useState<Any[]>([]);
+  const [myVisits, setMyVisits] = useState<Any[]>([]);
+  const [personalLoaded, setPersonalLoaded] = useState(false);
+  const [recordSheetOpen, setRecordSheetOpen] = useState(false);
+  const [recordGymId, setRecordGymId] = useState<string | null>(null);
+  const [recordGymQ, setRecordGymQ] = useState("");
+  const [recordDate, setRecordDate] = useState("");
 
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const showToast = useCallback((m: string) => { setToast(m); clearTimeout(timer.current); timer.current = setTimeout(() => setToast(""), 1900); }, []);
 
   // 네비게이션 — 브라우저 히스토리와 동기화 (모바일 뒤로가기 · 새로고침 복원 · 딥링크)
-  type NavSel = { gym?: string | null; setting?: string | null; prob?: string | null; poll?: string | null };
+  type NavSel = { gym?: string | null; setting?: string | null; prob?: string | null; poll?: string | null; m?: boolean };
   const navDepth = useRef(0);
-  const navState = (sc: string, sel: NavSel = {}) => ({ sc, gym: sel.gym ?? null, setting: sel.setting ?? null, prob: sel.prob ?? null, poll: sel.poll ?? null });
+  const navState = (sc: string, sel: NavSel = {}) => ({ sc, gym: sel.gym ?? null, setting: sel.setting ?? null, prob: sel.prob ?? null, poll: sel.poll ?? null, m: sel.m ?? (mode === "personal") });
   const urlOf = (st: ReturnType<typeof navState>) => {
     const q = new URLSearchParams();
     if (st.sc !== "home") q.set("s", st.sc);
@@ -188,13 +197,14 @@ export default function ClimbCrewApp() {
     if (st.setting) q.set("set", st.setting);
     if (st.prob) q.set("prob", st.prob);
     if (st.poll) q.set("poll", st.poll);
+    if (st.m) q.set("m", "me"); // 개인 모드 — 새로고침해도 유지
     const s = q.toString();
     return s ? `/?${s}` : "/";
   };
   const pushNav = (sc: string, sel: NavSel = {}) => { const st = navState(sc, sel); navDepth.current += 1; window.history.pushState({ ...st, d: navDepth.current }, "", urlOf(st)); };
   const replaceNav = (sc: string, sel: NavSel = {}) => { const st = navState(sc, sel); window.history.replaceState({ ...st, d: navDepth.current }, "", urlOf(st)); };
-  const go = (sc: string) => { pushNav(sc); setScreen(sc); };
-  const tab = (sc: string) => { pushNav(sc); setScreen(sc); };
+  const go = (sc: string, sel: NavSel = {}) => { pushNav(sc, sel); setScreen(sc); };
+  const tab = (sc: string, sel: NavSel = {}) => { pushNav(sc, sel); setScreen(sc); };
   const back = () => {
     if (navDepth.current > 0) { window.history.back(); return; }
     // 딥링크로 바로 들어온 경우 등 — 뒤가 없으면 홈으로
@@ -215,6 +225,7 @@ export default function ClimbCrewApp() {
       if (st.setting) setSelSettingId(st.setting);
       if (st.prob) setSelProb(st.prob);
       if (st.poll) setSelPollId(st.poll);
+      setMode(st.m ? "personal" : "crew");
       setScreen(st.sc);
     };
     window.addEventListener("popstate", onPop);
@@ -223,27 +234,33 @@ export default function ClimbCrewApp() {
 
   /* ===== 데이터 로딩 ===== */
   // 공개 데이터 + 초대코드 + 딥링크 파라미터 (마운트 1회)
-  const pendingLink = useRef<{ s: string; poll: string | null; gym: string | null; prob: string | null; setting: string | null; crew: string | null } | null>(null);
+  const pendingLink = useRef<{ s: string; poll: string | null; gym: string | null; prob: string | null; setting: string | null; crew: string | null; m: boolean } | null>(null);
   useEffect(() => {
     api.gymsList().then(setAllGymsList).catch(() => {});
     const sp = new URLSearchParams(window.location.search);
     const inv = sp.get("invite");
     if (inv) { setJoinCode(inv.toUpperCase()); setInvitePending(true); }
     const s = sp.get("s");
-    if (s) pendingLink.current = { s, poll: sp.get("poll"), gym: sp.get("gym"), prob: sp.get("prob"), setting: sp.get("set"), crew: sp.get("crew") };
+    const m = sp.get("m") === "me";
+    if (s || m) pendingLink.current = { s: s ?? "home", poll: sp.get("poll"), gym: sp.get("gym"), prob: sp.get("prob"), setting: sp.get("set"), crew: sp.get("crew"), m };
   }, []);
 
-  // 앱 진입 — 딥링크(또는 새로고침 시 URL)가 있으면 해당 화면으로, 아니면 홈/시작 화면으로
+  // 앱 진입 — 딥링크(또는 새로고침 시 URL)가 있으면 해당 화면으로, 아니면 홈으로.
+  // 크루가 없으면 개인 모드 홈 — 혼자서도 기록·탐색을 바로 쓸 수 있게.
   const enterApp = (cs: Any[]) => {
     const link = pendingLink.current;
     pendingLink.current = null;
-    if (invitePending || !cs.length) {
-      startWasAuto.current = !cs.length && !invitePending; // 크루 없음으로 자동 이동한 경우만 — 뒤늦게 크루 로드 시 홈 복구 대상
-      navDepth.current = 0; replaceNav("start"); setScreen("start"); return;
-    }
-    startWasAuto.current = false;
+    if (invitePending) { startWasAuto.current = false; navDepth.current = 0; replaceNav("start", { m: false }); setScreen("start"); return; }
     let sc = "home";
-    const sel: NavSel = {};
+    const sel: NavSel = { m: false };
+    if (!cs.length) {
+      startWasAuto.current = true; // 크루가 뒤늦게 로드되면 크루 모드로 복귀 대상
+      setMode("personal");
+      sel.m = true;
+    } else {
+      startWasAuto.current = false;
+    }
+    if (link?.m) { setMode("personal"); sel.m = true; }
     if (link && LINKABLE.has(link.s)) {
       const target = link.crew ? cs.find((c: Any) => c.id === link.crew) : null;
       if (link.crew && !target) {
@@ -335,14 +352,15 @@ export default function ClimbCrewApp() {
     if (!kakaoEnabled && bootstrapped && me && screen === "login") enterApp(crews);
   }, [kakaoEnabled, bootstrapped, me, screen, crews]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // 크루가 없어 자동으로 start 로 갔는데, 뒤늦게 크루가 로드되면 홈으로 복구.
-  // (사용자가 '코드로 참여'로 직접 온 start 는 startWasAuto=false 라 건드리지 않음)
+  // 크루가 없어 자동으로 개인 모드 홈에 갔는데, 뒤늦게 크루가 로드되면 크루 모드로 복귀.
+  // (사용자가 직접 개인 모드로 전환한 경우는 startWasAuto=false 라 건드리지 않음)
   useEffect(() => {
-    if (status === "authenticated" && screen === "start" && startWasAuto.current && !invitePending && crews.length > 0) {
+    if (screen === "home" && mode === "personal" && startWasAuto.current && !invitePending && crews.length > 0) {
       startWasAuto.current = false;
-      navDepth.current = 0; replaceNav("home"); setScreen("home");
+      setMode("crew");
+      replaceNav("home", { m: false });
     }
-  }, [status, screen, crews.length, invitePending]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [screen, mode, crews.length, invitePending]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const reloadCrew = useCallback((id: string) => {
     setCrewLoaded(false);
@@ -358,6 +376,17 @@ export default function ClimbCrewApp() {
     });
   }, [showToast]);
   useEffect(() => { if (activeCrewId) reloadCrew(activeCrewId); }, [activeCrewId, reloadCrew]);
+
+  // 개인 데이터 (내 기록·즐겨찾기) — 로그인 확인 후 1회 + 개인 모드 진입 시 갱신.
+  // 즐겨찾기 ★ 은 크루 모드의 암장 상세에서도 쓰므로 미리 로드해 둔다.
+  const reloadPersonal = useCallback(() => {
+    Promise.allSettled([
+      api.meGyms().then(setMyGyms),
+      api.meVisits().then(setMyVisits),
+    ]).then(() => setPersonalLoaded(true));
+  }, []);
+  useEffect(() => { if (me?.id) reloadPersonal(); }, [me?.id, reloadPersonal]);
+  useEffect(() => { if (mode === "personal" && me?.id) reloadPersonal(); }, [mode]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // 암장 상세
   useEffect(() => {
@@ -409,7 +438,31 @@ export default function ClimbCrewApp() {
   };
   const joinByCode = async () => { if (!joinCode.trim()) { showToast("초대 코드를 입력해주세요"); return; } try { const r: Any = await api.post("/api/crews/join", { inviteCode: joinCode }); const cs: Any = await api.crews(); setCrews(cs); setActiveCrewId(r.crewId); tab("home"); showToast("크루에 참여했어요"); } catch (e: Any) { showToast(e.message); } };
   const handleReq = async (userId: string, name: string, ok: boolean) => { try { await api.patch(`/api/crews/${activeCrewId}/requests/${userId}`, { action: ok ? "approve" : "reject" }); showToast(ok ? `${name}님을 승인했어요` : `${name}님 신청을 거절했어요`); if (activeCrewId) reloadCrew(activeCrewId); } catch (e: Any) { showToast(e.message); } };
-  const switchCrew = (id: string) => { const c = crews.find((x) => x.id === id); setActiveCrewId(id); setSwitcherOpen(false); tab("home"); showToast(`${c?.name ?? ""}(으)로 전환했어요`); };
+  const switchCrew = (id: string) => { const c = crews.find((x) => x.id === id); setActiveCrewId(id); setMode("crew"); setSwitcherOpen(false); tab("home", { m: false }); showToast(`${c?.name ?? ""}(으)로 전환했어요`); };
+  const switchPersonal = () => { setMode("personal"); setSwitcherOpen(false); tab("home", { m: true }); showToast("나의 클라이밍으로 전환했어요"); };
+  // 즐겨찾기 ★ — 개인 모드의 홈 암장 역할. 낙관적 업데이트 후 서버 반영.
+  const toggleFavorite = async (gymId: string, next: boolean) => {
+    setMyGyms((gs) => gs.map((g: Any) => (g.id === gymId ? { ...g, isHome: next, isFavorite: next } : g)));
+    try { await api.favoriteGym(gymId, next); showToast(next ? "즐겨찾기에 추가했어요 ★" : "즐겨찾기에서 뺐어요"); }
+    catch (e: Any) { setMyGyms((gs) => gs.map((g: Any) => (g.id === gymId ? { ...g, isHome: !next, isFavorite: !next } : g))); showToast(e.message); }
+  };
+  const isFavGym = (gymId: string | null) => !!(gymId && myGyms.find((g: Any) => g.id === gymId)?.isFavorite);
+  // 개인 기록 추가/삭제
+  const openRecordSheet = () => { const t = new Date(); setRecordGymId(null); setRecordGymQ(""); setRecordDate(`${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, "0")}-${String(t.getDate()).padStart(2, "0")}`); setRecordSheetOpen(true); };
+  const addPersonalVisit = async () => {
+    if (!recordGymId) { showToast("암장을 골라주세요"); return; }
+    if (!recordDate) { showToast("날짜를 골라주세요"); return; }
+    try {
+      await api.post("/api/me/visits", { gymId: recordGymId, date: new Date(`${recordDate}T12:00:00`).toISOString() });
+      setRecordSheetOpen(false);
+      showToast("기록을 추가했어요");
+      reloadPersonal();
+    } catch (e: Any) { showToast(e.message); }
+  };
+  const deletePersonalVisit = async (id: string) => {
+    try { await api.del(`/api/me/visits/${id}`); showToast("기록을 삭제했어요"); reloadPersonal(); }
+    catch (e: Any) { showToast(e.message); }
+  };
   const submitVote = async () => { if (!openPoll) return; const dIds = Object.keys(voteDates).filter((k) => voteDates[k]); const gIds = Object.keys(voteGyms).filter((k) => voteGyms[k]); try { await api.post(`/api/polls/${openPoll.id}/responses`, { dateOptionIds: dIds, gymOptionIds: gIds }); setVoteSubmitted(true); showToast(dIds.length ? "응답을 제출했어요" : "다 가능으로 제출했어요"); if (activeCrewId) api.crewPolls(activeCrewId).then(setPolls); api.poll(openPoll.id).then((p: Any) => setPolls((prev) => prev.map((x) => (x.id === p.id ? { ...x, ...p } : x)))); } catch (e: Any) { showToast(e.message); } };
   const inviteLink = () => `${window.location.origin}/?invite=${crewDetail?.inviteCode ?? ""}`;
   const inviteText = () => `NewSetter · '${crewDetail?.name ?? "우리 크루"}' 크루에 초대합니다!\n초대 코드: ${crewDetail?.inviteCode ?? ""}`;
@@ -433,14 +486,24 @@ export default function ClimbCrewApp() {
   // 방문/일정 추가 — 실수 탭 방지를 위해 날짜 확인 시트를 거침
   const openVisitSheet = () => { const t = new Date(); setVisitDate(`${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, "0")}-${String(t.getDate()).padStart(2, "0")}`); setVisitSheetOpen(true); };
   const recordVisit = async () => {
-    if (!activeCrewId || !selGym || !visitDate) return;
+    if (!selGym || !visitDate) return;
+    const iso = new Date(`${visitDate}T12:00:00`).toISOString();
     try {
-      await api.post(`/api/crews/${activeCrewId}/visits`, { gymId: selGym, date: new Date(`${visitDate}T12:00:00`).toISOString() });
-      setVisitSheetOpen(false);
-      showToast("방문 기록을 추가했어요");
-      api.crewVisits(activeCrewId).then(setVisits);
-      api.crewGyms(activeCrewId).then(setCrewGyms);
-      if (selGym) api.gym(selGym, activeCrewId).then(setGymDetail);
+      if (mode === "personal") {
+        // 개인 모드 — 크루와 무관한 내 기록으로 저장
+        await api.post("/api/me/visits", { gymId: selGym, date: iso });
+        setVisitSheetOpen(false);
+        showToast("내 기록에 추가했어요");
+        reloadPersonal();
+      } else {
+        if (!activeCrewId) return;
+        await api.post(`/api/crews/${activeCrewId}/visits`, { gymId: selGym, date: iso });
+        setVisitSheetOpen(false);
+        showToast("방문 기록을 추가했어요");
+        api.crewVisits(activeCrewId).then(setVisits);
+        api.crewGyms(activeCrewId).then(setCrewGyms);
+      }
+      if (selGym) api.gym(selGym, activeCrewId || undefined).then(setGymDetail);
     } catch (e: Any) { showToast(e.message); }
   };
 
@@ -569,13 +632,19 @@ export default function ClimbCrewApp() {
   const ac = crews.find((c) => c.id === activeCrewId) || null;
   const memberCount = ac?._count?.members ?? crewDetail?._count?.members ?? 0;
 
-  const gyms = crewGyms.map((r, i) => ({ id: r.id, name: r.name, loc: r.address || "", lat: r.lat ?? null, lng: r.lng ?? null, rating: r.rating ?? 0, reviews: r.reviewCount ?? 0, weeks: r.weeksSinceVisit, ever: !!r.everVisited, due: !!r.dueForReset, cycle: r.resetCycleWeeks ?? 4, hasSet: !!r.latestSetting, isHome: !!r.isHome, color: PALETTE[i % PALETTE.length], settingId: r.latestSetting?.id ?? null, instagram: r.instagram, lastVisit: r.lastVisit ?? null }));
+  // 개인 모드면 내 데이터, 아니면 크루 데이터 — 홈/캘린더/탐색 렌더는 이 소스만 바라봄
+  const personal = mode === "personal";
+  const viewGyms = personal ? myGyms : crewGyms;
+  const viewVisits = personal ? myVisits : visits;
+  const viewLoaded = personal ? personalLoaded : crewLoaded;
+
+  const gyms = viewGyms.map((r, i) => ({ id: r.id, name: r.name, loc: r.address || "", lat: r.lat ?? null, lng: r.lng ?? null, rating: r.rating ?? 0, reviews: r.reviewCount ?? 0, weeks: r.weeksSinceVisit, ever: !!r.everVisited, due: !!r.dueForReset, cycle: r.resetCycleWeeks ?? 4, hasSet: !!r.latestSetting, isHome: !!r.isHome, isFavorite: !!r.isFavorite, color: PALETTE[i % PALETTE.length], settingId: r.latestSetting?.id ?? null, instagram: r.instagram, lastVisit: r.lastVisit ?? null }));
   // 프랜차이즈: 이름 첫 토큰을 브랜드로(정확 일치만 — 잘못 합치지 않게). 2개 이상이면 체인.
   const brand = useMemo(() => {
     const counts = new Map<string, number>();
-    for (const r of crewGyms) { const b = brandOf(r.name); counts.set(b, (counts.get(b) ?? 0) + 1); }
+    for (const r of viewGyms) { const b = brandOf(r.name); counts.set(b, (counts.get(b) ?? 0) + 1); }
     return { of: brandOf, counts };
-  }, [crewGyms]);
+  }, [viewGyms]);
   const brandColorOf = (name: string) => { const b = brand.of(name); return PIN_RGB[[...b].reduce((a, c) => a + c.charCodeAt(0), 0) % PIN_RGB.length]; };
   const visitLabel = (g: Any) => (!g.ever ? "아직 안 가봄" : g.due ? `간 지 ${g.weeks}주 · 또 갈 때` : g.weeks === 0 ? "이번 주 방문" : `${g.weeks}주 전 방문`);
   // 투표 암장 후보: 홈 암장 먼저(오래 안 간 곳 최우선), 나머지는 검색으로 추가
@@ -585,10 +654,10 @@ export default function ClimbCrewApp() {
   // 지도 마커용(안정된 identity — crewGyms/검색어 바뀔 때만 재생성해서 188개 재구성 방지)
   const mapGyms = useMemo(() => {
     const q = exploreQ.trim().toLowerCase();
-    return crewGyms
+    return viewGyms
       .filter((r: Any) => r.lat != null && r.lng != null && (!q || (r.name + " " + (r.address || "")).toLowerCase().includes(q)) && (!brandFilter || brand.of(r.name) === brandFilter))
       .map((r: Any) => ({ id: r.id, name: r.name, lat: r.lat, lng: r.lng, due: !!r.dueForReset, color: brandColorOf(r.name) }));
-  }, [crewGyms, exploreQ, brandFilter]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [viewGyms, exploreQ, brandFilter]); // eslint-disable-line react-hooks/exhaustive-deps
   // 인기 프랜차이즈 칩 (지점 2개 이상, 지점 수 많은 순)
   const topBrands = useMemo(() => [...brand.counts.entries()].filter(([, n]) => n >= 2).sort((a, b) => b[1] - a[1]).slice(0, 8), [brand]);
   const mapSelGym = mapSel ? gyms.find((g) => g.id === mapSel) : null;
@@ -607,9 +676,9 @@ export default function ClimbCrewApp() {
   const canDeletePoll = !!(me && openPoll && (openPoll.creatorId === me.id || myRole === "LEADER")); // 방치된 투표는 크루장도 정리 가능
   // 다음 세션 = 실제 확정된 Visit(가장 가까운 미래). 취소하면 사라지도록 Visit 기준으로 계산.
   const _todayMid0 = new Date(); _todayMid0.setHours(0, 0, 0, 0);
-  const nextVisit = [...visits].filter((v) => new Date(v.date).getTime() >= _todayMid0.getTime()).sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())[0] || null;
+  const nextVisit = [...viewVisits].filter((v) => new Date(v.date).getTime() >= _todayMid0.getTime()).sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())[0] || null;
   const upcoming = nextVisit ? { visit: nextVisit, date: fmtDate(nextVisit.date), gym: nextVisit.gym?.name || "", going: nextVisit.attendeeCount ?? 0 } : null;
-  const detailVisit = detailVisitId ? visits.find((v) => v.id === detailVisitId) || null : null; // #2 세션 상세 (취소되면 자동으로 사라짐)
+  const detailVisit = detailVisitId ? viewVisits.find((v) => v.id === detailVisitId) || null : null; // #2 세션 상세 (취소되면 자동으로 사라짐)
 
   const adaptProb = (p: Any) => ({ id: p.id, color: p.color, tag: tagOf(p.label, p.color), feel: feelFromScore(p.difficultyScore), send: p.sendRate == null ? 0 : Math.round(p.sendRate * 100), honey: (p.honeyRatio ?? 0) > 0 || (p.honeyCount ?? 0) > 0, videos: p.videoCount ?? 0, mine: !!p.mySent, hex: HEX[p.color] || "#999" });
   const probGroups = (problemsData?.colors ?? []).map((c: Any) => { const items = c.problems.map(adaptProb); items.sort((a: Any, b: Any) => (sort === "easy" ? a.feel - b.feel : b.feel - a.feel)); return { color: c.color, items }; });
@@ -638,42 +707,52 @@ export default function ClimbCrewApp() {
   const calMonth = `${calY}년 ${calM + 1}월`;
   const daysInMonth = new Date(calY, calM + 1, 0).getDate();
   const firstDow = calBaseDate.getDay();
-  // #5 내가 가는 일정 vs 크루 일정(내가 안 감) 구분
+  // #5 내가 가는 일정 vs 크루 일정(내가 안 감) 구분 (개인 모드에선 전부 내 일정)
   const inCalMonth = (v: Any) => { const d = new Date(v.date); return d.getFullYear() === calY && d.getMonth() === calM; };
-  const myDays = new Set(visits.filter((v) => v.mine && inCalMonth(v)).map((v) => new Date(v.date).getDate()));
-  const crewDays = new Set(visits.filter((v) => !v.mine && inCalMonth(v)).map((v) => new Date(v.date).getDate()));
+  const myDays = new Set(viewVisits.filter((v) => v.mine && inCalMonth(v)).map((v) => new Date(v.date).getDate()));
+  const crewDays = new Set(viewVisits.filter((v) => !v.mine && inCalMonth(v)).map((v) => new Date(v.date).getDate()));
   const calBase: CSSProperties = { width: 34, height: 34, display: "flex", alignItems: "center", justifyContent: "center", borderRadius: 999, margin: "0 auto", color: "#3A3633" };
   const calCells: { key: string; day: number | string; style: CSSProperties }[] = [];
   for (let i = 0; i < firstDow; i++) calCells.push({ key: "b" + i, day: "", style: calBase });
   for (let d = 1; d <= daysInMonth; d++) { let v: CSSProperties = {}; if (myDays.has(d)) v = { background: hatch(CRAYON.green), color: "#fff", fontWeight: 700, border: `2px solid ${INK}`, borderRadius: "56% 44% 52% 48% / 48% 52% 44% 56%", transform: "rotate(-3deg)" }; else if (crewDays.has(d)) v = { border: "2px dashed #2E6B22", color: "#2E6B22", fontWeight: 700, borderRadius: "56% 44% 52% 48% / 48% 52% 44% 56%", transform: "rotate(-2deg)" }; else if (isCurMonth && d === now.getDate()) v = { border: "2.5px solid #E24D3A", borderRadius: "52% 48% 46% 54% / 50% 46% 54% 50%", color: "#B4432E", fontWeight: 700, transform: "rotate(2deg)" }; calCells.push({ key: "d" + d, day: d, style: { ...calBase, ...v } }); }
   const todayMid = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
-  const futureVisits = visits.filter((v) => new Date(v.date).getTime() >= todayMid).sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
-  const pastVisits = visits.filter((v) => new Date(v.date).getTime() < todayMid).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+  const futureVisits = viewVisits.filter((v) => new Date(v.date).getTime() >= todayMid).sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+  const pastVisits = viewVisits.filter((v) => new Date(v.date).getTime() < todayMid).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
   const visitRow = (v: Any, future: boolean) => {
+    const isPersonalRec = !!v.personal; // 크루 없는 내 기록
     const canEdit = !!me && (v.createdById === me.id || ac?.leaderId === me.id);
     return (
-    <div key={v.id} style={{ padding: 14, ...cardStyle, ...(v.mine ? { border: `2px solid #2E6B22`, background: "#EAF7EE" } : {}) }}>
+    <div key={v.id} style={{ padding: 14, ...cardStyle, ...(!personal && v.mine ? { border: `2px solid #2E6B22`, background: "#EAF7EE" } : {}) }}>
       <div onClick={() => openVisitDetail(v)} style={{ display: "flex", alignItems: "center", gap: 12, cursor: "pointer" }}>
         <div style={{ width: 44, height: 44, borderRadius: 12, flexShrink: 0, background: future ? "#FBF0DA" : "#E4F5EC", display: "flex", alignItems: "center", justifyContent: "center" }}>
           {future ? <svg width="20" height="20" viewBox="0 0 24 24" fill="none"><rect x="3.5" y="5" width="17" height="15.5" rx="2.5" stroke="#E24D3A" strokeWidth="1.8" /><path d="M3.5 9.5h17M8 3.5v3M16 3.5v3" stroke="#E24D3A" strokeWidth="1.8" strokeLinecap="round" /></svg>
                   : <svg width="20" height="20" viewBox="0 0 20 20"><path d="M4 10.5 8 14.5 16 5.5" stroke="#6BBF59" strokeWidth="2.4" fill="none" strokeLinecap="round" strokeLinejoin="round" /></svg>}
         </div>
-        <div style={{ flex: 1, minWidth: 0 }}><div style={{ fontSize: 15, fontWeight: 700 }}>{v.gym?.name}</div><div style={{ fontSize: 12, color: "#514C44", marginTop: 2 }}>{fmtDate(v.date)} · {v.source === "VOTE" ? "투표 확정" : "직접 추가"}{typeof v.attendeeCount === "number" && v.attendeeCount > 0 ? ` · ${v.attendeeCount}명 가요` : ""}</div></div>
-        {v.mine && <span style={{ fontSize: 11, fontWeight: 800, color: "#2E6B22", background: "#CDEBD4", border: "1.5px solid #2E6B22", borderRadius: 999, padding: "3px 9px", flexShrink: 0 }}>내가 가요</span>}
+        <div style={{ flex: 1, minWidth: 0 }}><div style={{ fontSize: 15, fontWeight: 700 }}>{v.gym?.name}</div><div style={{ fontSize: 12, color: "#514C44", marginTop: 2 }}>{fmtDate(v.date)} · {isPersonalRec ? "내 기록" : v.source === "VOTE" ? "투표 확정" : "직접 추가"}{typeof v.attendeeCount === "number" && v.attendeeCount > 0 ? ` · ${v.attendeeCount}명 가요` : ""}</div></div>
+        {personal && !isPersonalRec && v.crewName && <span style={{ fontSize: 11, fontWeight: 800, color: "#2456B0", background: "#E6EEFB", border: "1.5px solid #2456B0", borderRadius: 999, padding: "3px 9px", flexShrink: 0 }}>{v.crewName}</span>}
+        {!personal && v.mine && <span style={{ fontSize: 11, fontWeight: 800, color: "#2E6B22", background: "#CDEBD4", border: "1.5px solid #2E6B22", borderRadius: 999, padding: "3px 9px", flexShrink: 0 }}>내가 가요</span>}
         <ChevR />
       </div>
-      {future && (
-        <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
-          <button onClick={() => attendVisit(v, !v.mine)} style={{ flex: 1, height: 40, border: `2px solid ${INK}`, borderRadius: WOBS[2], background: v.mine ? "#FFFEFA" : HILITE, fontSize: 14, fontWeight: 700, cursor: "pointer" }}>{v.mine ? "안 갈래요" : "나도 갈래요"}</button>
-          {canEdit && <button onClick={() => openVisitEdit(v)} style={{ height: 40, padding: "0 14px", border: `2px solid ${INK}`, borderRadius: WOBS[2], background: "#FFFEFA", fontSize: 14, fontWeight: 700, cursor: "pointer" }}>변경</button>}
-          {canEdit && <button onClick={() => { if (typeof window !== "undefined" && window.confirm("이 일정을 취소할까요?")) cancelVisit(v); }} style={{ height: 40, padding: "0 14px", border: "2px solid #C23A24", borderRadius: WOBS[2], background: "#FFFEFA", color: "#C23A24", fontSize: 14, fontWeight: 700, cursor: "pointer" }}>취소</button>}
-        </div>
-      )}
-      {!future && canEdit && (
+      {isPersonalRec ? (
         <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 10 }}>
-          <button onClick={() => { if (typeof window !== "undefined" && window.confirm("이 방문 기록을 삭제할까요? 되돌릴 수 없어요.")) cancelVisit(v); }} style={{ height: 36, padding: "0 12px", border: "none", background: "transparent", color: "#B4432E", fontSize: 13, fontWeight: 700, cursor: "pointer", textDecoration: "underline" }}>기록 삭제</button>
+          <button onClick={() => { if (typeof window !== "undefined" && window.confirm("이 기록을 삭제할까요? 되돌릴 수 없어요.")) deletePersonalVisit(v.id); }} style={{ height: 36, padding: "0 12px", border: "none", background: "transparent", color: "#B4432E", fontSize: 13, fontWeight: 700, cursor: "pointer", textDecoration: "underline" }}>기록 삭제</button>
         </div>
-      )}
+      ) : personal ? (
+        future ? <div style={{ marginTop: 10, fontSize: 12, color: "#8A8477" }}>크루 일정 · 참여 변경은 크루 모드에서 할 수 있어요</div> : null
+      ) : (<>
+        {future && (
+          <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+            <button onClick={() => attendVisit(v, !v.mine)} style={{ flex: 1, height: 40, border: `2px solid ${INK}`, borderRadius: WOBS[2], background: v.mine ? "#FFFEFA" : HILITE, fontSize: 14, fontWeight: 700, cursor: "pointer" }}>{v.mine ? "안 갈래요" : "나도 갈래요"}</button>
+            {canEdit && <button onClick={() => openVisitEdit(v)} style={{ height: 40, padding: "0 14px", border: `2px solid ${INK}`, borderRadius: WOBS[2], background: "#FFFEFA", fontSize: 14, fontWeight: 700, cursor: "pointer" }}>변경</button>}
+            {canEdit && <button onClick={() => { if (typeof window !== "undefined" && window.confirm("이 일정을 취소할까요?")) cancelVisit(v); }} style={{ height: 40, padding: "0 14px", border: "2px solid #C23A24", borderRadius: WOBS[2], background: "#FFFEFA", color: "#C23A24", fontSize: 14, fontWeight: 700, cursor: "pointer" }}>취소</button>}
+          </div>
+        )}
+        {!future && canEdit && (
+          <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 10 }}>
+            <button onClick={() => { if (typeof window !== "undefined" && window.confirm("이 방문 기록을 삭제할까요? 되돌릴 수 없어요.")) cancelVisit(v); }} style={{ height: 36, padding: "0 12px", border: "none", background: "transparent", color: "#B4432E", fontSize: 13, fontWeight: 700, cursor: "pointer", textDecoration: "underline" }}>기록 삭제</button>
+          </div>
+        )}
+      </>)}
     </div>
     );
   };
@@ -700,6 +779,15 @@ export default function ClimbCrewApp() {
   const segStyle = (active: boolean): CSSProperties => ({ flex: 1, textAlign: "center", padding: "9px 0", fontSize: 16, fontWeight: 700, borderRadius: 14, cursor: "pointer", border: active ? `2px solid ${INK}` : "2px dashed rgba(58,54,51,0.3)", background: active ? HILITE : "transparent", color: active ? INK : "#8A8477" });
 
   const recColors: [string, string][] = [["흰", "#EFEFE8"], ["노랑", "#F5C518"], ["주황", "#F07E1E"], ["초록", "#3AAE5A"], ["파랑", "#2F72E0"], ["빨강", "#E23B3B"], ["검정", "#2A2A2A"]];
+
+  // 즐겨찾기 ★ — 크레파스로 칠한 손그림 별 (켜짐: 노랑 채움 / 꺼짐: 연필 외곽선)
+  const FavStar = ({ on, onClick, size = 40 }: { on: boolean; onClick: () => void; size?: number }) => (
+    <button aria-label={on ? "즐겨찾기 해제" : "즐겨찾기 추가"} onClick={(e) => { e.stopPropagation(); onClick(); }} style={{ width: size, height: size, flexShrink: 0, border: "none", background: "transparent", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", padding: 0 }}>
+      <svg width={size * 0.6} height={size * 0.6} viewBox="0 0 24 24" style={{ transform: on ? "rotate(-8deg)" : "rotate(0deg)", transition: "transform .15s" }}>
+        <path d="M12 2.8l2.7 5.7 6.1.8-4.5 4.2 1.2 6-5.5-3-5.5 3 1.2-6L3.2 9.3l6.1-.8z" fill={on ? "#F5C518" : "none"} stroke={on ? INK : "rgba(58,54,51,0.45)"} strokeWidth="1.8" strokeLinejoin="round" strokeDasharray={on ? "none" : "3 2"} />
+      </svg>
+    </button>
+  );
 
   // 투표 옵션 어댑터
   const votePoll = openPoll;
@@ -903,12 +991,18 @@ export default function ClimbCrewApp() {
             <div style={{ animation: "ccfade .3s ease", paddingBottom: 96 }}>
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "56px 16px 10px" }}>
                 <div onClick={() => setSwitcherOpen(true)} style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
-                  <div style={{ width: 32, height: 32, borderRadius: "60% 45% 55% 50% / 50% 60% 45% 58%", background: hatch(hexRgb(ac ? crewColor(ac.id) : "#E24D3A")), border: `2px solid ${INK}`, display: "flex", alignItems: "center", justifyContent: "center", transform: "rotate(-3deg)" }}><svg width="17" height="17" viewBox="0 0 40 40" fill="none"><path d="M9 30 18 12l5 9 4-6 4 15" stroke="#fff" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round" /></svg></div>
-                  <div style={{ fontSize: 20, fontWeight: 700 }}>{ac?.name ?? "…"}</div>
+                  {personal ? (
+                    me?.profileImg
+                      ? <img src={me.profileImg} alt="" style={{ width: 32, height: 32, borderRadius: "60% 45% 55% 50% / 50% 60% 45% 58%", objectFit: "cover", border: `2px solid ${INK}`, transform: "rotate(-3deg)" }} />
+                      : <div style={{ width: 32, height: 32, borderRadius: "60% 45% 55% 50% / 50% 60% 45% 58%", background: hatch("58,54,51"), border: `2px solid ${INK}`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14, fontWeight: 700, color: "#FFFDF6", transform: "rotate(-3deg)" }}>{(me?.nickname || "나")[0]}</div>
+                  ) : (
+                    <div style={{ width: 32, height: 32, borderRadius: "60% 45% 55% 50% / 50% 60% 45% 58%", background: hatch(hexRgb(ac ? crewColor(ac.id) : "#E24D3A")), border: `2px solid ${INK}`, display: "flex", alignItems: "center", justifyContent: "center", transform: "rotate(-3deg)" }}><svg width="17" height="17" viewBox="0 0 40 40" fill="none"><path d="M9 30 18 12l5 9 4-6 4 15" stroke="#fff" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round" /></svg></div>
+                  )}
+                  <div style={{ fontSize: 20, fontWeight: 700 }}>{personal ? "나의 클라이밍" : ac?.name ?? "…"}</div>
                   <svg width="12" height="12" viewBox="0 0 12 12" style={{ marginTop: 2 }}><path d="M2 4.5 6 8.5 10 4.5" stroke="#514C44" strokeWidth="1.8" fill="none" strokeLinecap="round" strokeLinejoin="round" /></svg>
                 </div>
                 <div style={{ display: "flex", alignItems: "center", gap: 2 }}>
-                  <div onClick={openCrewManage} aria-label="크루 관리" style={{ width: 40, height: 40, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}><svg width="22" height="22" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="3.2" stroke="#3A3633" strokeWidth="1.8" /><path d="M12 3v2.2M12 18.8V21M3 12h2.2M18.8 12H21M5.8 5.8l1.6 1.6M16.6 16.6 18.2 18.2M18.2 5.8 16.6 7.4M7.4 16.6 5.8 18.2" stroke="#3A3633" strokeWidth="1.8" strokeLinecap="round" /></svg></div>
+                  {!personal && <div onClick={openCrewManage} aria-label="크루 관리" style={{ width: 40, height: 40, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}><svg width="22" height="22" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="3.2" stroke="#3A3633" strokeWidth="1.8" /><path d="M12 3v2.2M12 18.8V21M3 12h2.2M18.8 12H21M5.8 5.8l1.6 1.6M16.6 16.6 18.2 18.2M18.2 5.8 16.6 7.4M7.4 16.6 5.8 18.2" stroke="#3A3633" strokeWidth="1.8" strokeLinecap="round" /></svg></div>}
                   <button aria-label="알림 (준비 중)" onClick={() => showToast("알림은 준비 중이에요")} style={{ position: "relative", width: 40, height: 40, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", border: "none", background: "transparent", opacity: 0.55 }}><svg width="22" height="22" viewBox="0 0 24 24" fill="none"><path d="M6 9a6 6 0 1 1 12 0c0 5 2 6 2 6H4s2-1 2-6Z" stroke="#3A3633" strokeWidth="1.8" strokeLinejoin="round" /><path d="M10 20a2 2 0 0 0 4 0" stroke="#3A3633" strokeWidth="1.8" strokeLinecap="round" /></svg></button>
                 </div>
               </div>
@@ -917,24 +1011,47 @@ export default function ClimbCrewApp() {
                 {upcoming ? (
                   <div onClick={() => openVisitDetail(upcoming.visit)} style={{ position: "relative", padding: "16px 18px 14px", background: "#FFFEFA", border: `2.5px solid #4E9D57`, borderRadius: WOBS[0], transform: "rotate(-0.4deg)", cursor: "pointer" }}>
                     <span style={{ position: "absolute", top: -12, right: 12, transform: "rotate(7deg)", fontSize: 16, fontWeight: 700, padding: "0 12px", color: INK, background: `repeating-linear-gradient(50deg, rgba(${CRAYON.yellow},0.85) 0 4px, rgba(${CRAYON.yellow},0.6) 4px 7px)`, border: `2px solid ${INK}`, borderRadius: WOBS[2] }}>확정!</span>
-                    <div style={{ fontSize: 15, color: "#8C857B", fontWeight: 700 }}>다음 세션</div>
+                    <div style={{ fontSize: 15, color: "#8C857B", fontWeight: 700 }}>{personal ? "다음 클라이밍" : "다음 세션"}</div>
                     <div style={{ fontSize: 32, fontWeight: 700, lineHeight: 1.05, margin: "4px 0 2px" }}>{upcoming.date}</div>
                     <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 19, fontWeight: 700, marginTop: 2 }}><span style={{ width: 18, height: 18, flexShrink: 0, border: `2px solid ${INK}`, borderRadius: "170px 40px 190px 30px / 30px 190px 40px 170px", background: hatchSoft(CRAYON.green) }} />{upcoming.gym}</div>
                     <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 8 }}>
-                      <div style={{ fontSize: 15, fontWeight: 700, color: "#443F38" }}>{upcoming.going > 0 ? `${upcoming.going}명 가요${upcoming.visit?.mine ? " · 나 포함" : ""}` : "아직 참여자 없음"}</div>
-                      <div style={{ fontSize: 13, fontWeight: 700, color: "#4E9D57" }}>누가 가는지 ›</div>
+                      <div style={{ fontSize: 15, fontWeight: 700, color: "#443F38" }}>{upcoming.visit?.personal ? "내 기록" : upcoming.visit?.crewName && personal ? `${upcoming.visit.crewName} 일정` : upcoming.going > 0 ? `${upcoming.going}명 가요${upcoming.visit?.mine ? " · 나 포함" : ""}` : "아직 참여자 없음"}</div>
+                      {!upcoming.visit?.personal && <div style={{ fontSize: 13, fontWeight: 700, color: "#4E9D57" }}>누가 가는지 ›</div>}
                     </div>
                   </div>
                 ) : (
                   <div style={{ padding: "16px 18px", border: "2.5px dashed rgba(58,54,51,0.4)", borderRadius: WOBS[0], background: "#FFFEFA", transform: "rotate(-0.3deg)" }}>
-                    <div style={{ fontSize: 15, color: "#8C857B", fontWeight: 700 }}>다음 세션</div>
+                    <div style={{ fontSize: 15, color: "#8C857B", fontWeight: 700 }}>{personal ? "다음 클라이밍" : "다음 세션"}</div>
                     <div style={{ fontSize: 24, fontWeight: 700, margin: "2px 0 2px" }}>아직 미정이에요</div>
-                    <div style={{ fontSize: 15, color: "#443F38", lineHeight: 1.45 }}>투표로 날짜랑 암장을 정해봐요.</div>
-                    <button onClick={openCreatePoll} style={{ display: "inline-flex", alignItems: "center", gap: 6, marginTop: 12, height: 44, padding: "0 18px", fontSize: 16, fontWeight: 700, ...crayonBtn(CRAYON.red, 1) }}>새 투표 만들기</button>
+                    <div style={{ fontSize: 15, color: "#443F38", lineHeight: 1.45 }}>{personal ? "언제 갈지 기록으로 남겨봐요." : "투표로 날짜랑 암장을 정해봐요."}</div>
+                    {personal
+                      ? <button onClick={openRecordSheet} style={{ display: "inline-flex", alignItems: "center", gap: 6, marginTop: 12, height: 44, padding: "0 18px", fontSize: 16, fontWeight: 700, ...crayonBtn(CRAYON.green, 1) }}>기록 추가</button>
+                      : <button onClick={openCreatePoll} style={{ display: "inline-flex", alignItems: "center", gap: 6, marginTop: 12, height: 44, padding: "0 18px", fontSize: 16, fontWeight: 700, ...crayonBtn(CRAYON.red, 1) }}>새 투표 만들기</button>}
                   </div>
                 )}
               </div>
 
+              {personal && (
+                <div style={{ padding: "22px 16px 0" }}>
+                  {crews.length === 0 ? (
+                    <div style={{ padding: "16px 18px", ...cardStyle, borderRadius: WOBS[1] }}>
+                      <div style={{ fontSize: 16, fontWeight: 800 }}>크루와 함께 가면 더 재밌어요</div>
+                      <div style={{ fontSize: 13, color: "#514C44", marginTop: 4, lineHeight: 1.5 }}>크루를 만들면 투표로 날짜·암장을 정하고<br />누가 가는지도 한눈에 볼 수 있어요.</div>
+                      <div style={{ display: "flex", gap: 8, marginTop: 14 }}>
+                        <button onClick={() => go("create")} style={{ flex: 1, height: 44, fontSize: 15, fontWeight: 700, ...crayonBtn(CRAYON.red, 0) }}>새 크루 만들기</button>
+                        <button onClick={() => go("start")} style={{ flex: 1, height: 44, border: `2px solid ${INK}`, borderRadius: WOBS[2], background: "#FFFEFA", fontSize: 15, fontWeight: 700, cursor: "pointer" }}>코드로 참여</button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div onClick={() => setSwitcherOpen(true)} style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 14px", ...cardStyle, borderRadius: WOBS[2], cursor: "pointer" }}>
+                      <div style={{ flex: 1, fontSize: 13, color: "#514C44" }}>크루 투표·일정은 크루 모드에서 볼 수 있어요</div>
+                      <div style={{ fontSize: 13, fontWeight: 700, color: "#E24D3A" }}>크루로 전환 ›</div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {!personal && (
               <div style={{ padding: "22px 16px 0" }}>
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
                   <div style={sectionLabel}>진행 중인 투표</div>
@@ -957,15 +1074,20 @@ export default function ClimbCrewApp() {
                   <div style={{ padding: 16, ...cardStyle, color: "#514C44", fontSize: 14 }}>진행 중인 투표가 없어요. <span onClick={openCreatePoll} style={{ color: "#E24D3A", fontWeight: 700, cursor: "pointer" }}>새로 만들기</span></div>
                 )}
               </div>
+              )}
 
               <div style={{ padding: "22px 16px 0" }}>
                 <div style={sectionLabel}>가야 할 암장</div>
-                <div style={{ fontSize: 12, color: "#514C44", margin: "2px 0 10px" }}>간 지 오래됐거나 안 가본 홈 암장</div>
+                <div style={{ fontSize: 12, color: "#514C44", margin: "2px 0 10px" }}>{personal ? "간 지 오래됐거나 안 가본 즐겨찾기 ★ 암장" : "간 지 오래됐거나 안 가본 홈 암장"}</div>
                 <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                  {toGo.length === 0 && (!crewLoaded ? (
+                  {toGo.length === 0 && (!viewLoaded ? (
                     <div style={{ padding: 14, ...cardStyle, color: "#A8A297", fontSize: 13 }}>불러오는 중이에요…</div>
                   ) : !gyms.some((g) => g.isHome) ? (
-                    <div style={{ padding: 14, ...cardStyle, fontSize: 13, color: "#514C44" }}>홈 암장을 설정하면 갈 때가 된 곳을 알려드려요. <span onClick={openCrewManage} style={{ color: "#E24D3A", fontWeight: 700, cursor: "pointer" }}>설정하기</span></div>
+                    personal ? (
+                      <div style={{ padding: 14, ...cardStyle, fontSize: 13, color: "#514C44" }}>탐색에서 ★을 누르면 자주 가는 암장을 모아둘 수 있어요. <span onClick={() => tab("explore")} style={{ color: "#E24D3A", fontWeight: 700, cursor: "pointer" }}>탐색 가기</span></div>
+                    ) : (
+                      <div style={{ padding: 14, ...cardStyle, fontSize: 13, color: "#514C44" }}>홈 암장을 설정하면 갈 때가 된 곳을 알려드려요. <span onClick={openCrewManage} style={{ color: "#E24D3A", fontWeight: 700, cursor: "pointer" }}>설정하기</span></div>
+                    )
                   ) : (
                     <div style={{ padding: 14, ...cardStyle, color: "#514C44", fontSize: 13 }}>다 다녀왔어요! 🎉</div>
                   ))}
@@ -1023,6 +1145,7 @@ export default function ClimbCrewApp() {
                         <div style={{ fontSize: 12, color: "#514C44", marginTop: 2 }}>{g.loc}{g.rating ? ` · ★ ${g.rating}` : ""}</div>
                         <div style={{ display: "inline-flex", alignItems: "center", marginTop: 6, padding: "2px 8px", borderRadius: 999, fontSize: 11, fontWeight: 700, background: g.due ? "#FBEFD9" : "#F3EEDF", color: g.due ? "#B5730A" : "#514C44" }}>{visitLabel(g)}</div>
                       </div>
+                      <FavStar on={isFavGym(g.id)} onClick={() => toggleFavorite(g.id, !isFavGym(g.id))} />
                       <ChevR />
                     </div>
                   ))}
@@ -1130,7 +1253,7 @@ export default function ClimbCrewApp() {
           {is("gymDetail") && sg && (
             <>
               <div style={{ animation: "ccfade .3s ease", paddingBottom: 24 }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "56px 12px 8px" }}><BackBtn onClick={back} /><div style={{ fontSize: 18, fontWeight: 700 }}>{sg.name}</div></div>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "56px 12px 8px" }}><BackBtn onClick={back} /><div style={{ flex: 1, fontSize: 18, fontWeight: 700, minWidth: 0 }}>{sg.name}</div><FavStar on={isFavGym(selGym)} onClick={() => selGym && toggleFavorite(selGym, !isFavGym(selGym))} size={44} /></div>
                 <div style={{ padding: "8px 16px 0" }}><div style={{ display: "flex", alignItems: "center", gap: 14 }}><div style={avatarStyle(sg.color, 60)}>{sg.initial}</div><div><div style={{ fontSize: 22, fontWeight: 800 }}>{sg.name}</div><div style={{ fontSize: 13, color: "#514C44", marginTop: 4 }}>{sg.loc}</div><div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 6 }}>{sg.reviews ? (<><span style={{ color: "#E0921A", fontSize: 15 }}>★</span><span style={{ fontSize: 15, fontWeight: 700 }}>{sg.rating}</span><span style={{ fontSize: 13, color: "#514C44" }}>리뷰 {sg.reviews}개</span></>) : (<span style={{ fontSize: 13, color: "#514C44" }}>아직 리뷰 없음</span>)}</div></div></div></div>
                 <div style={{ padding: "18px 16px 0" }}>
                   <div style={{ padding: 14, borderRadius: WOBS[1], background: sg.due ? "#FBEFD9" : "#E4F5EC", border: `2px solid ${INK}`, transform: "rotate(-0.4deg)" }}>
@@ -1178,7 +1301,7 @@ export default function ClimbCrewApp() {
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(7,1fr)", rowGap: 6, fontSize: 14 }}>{calCells.map((c) => <div key={c.key} style={c.style}>{c.day}</div>)}</div>
                 <div style={{ display: "flex", gap: 14, marginTop: 14, paddingTop: 14, borderTop: "2px dashed rgba(58,54,51,0.25)", fontSize: 13, fontWeight: 700, color: "#443F38", flexWrap: "wrap" }}><div style={{ display: "flex", alignItems: "center", gap: 6 }}><span style={{ width: 13, height: 13, borderRadius: "56% 44% 52% 48% / 48% 52% 44% 56%", background: hatch(CRAYON.green), border: `1.5px solid ${INK}`, display: "inline-block" }} />내 일정</div><div style={{ display: "flex", alignItems: "center", gap: 6 }}><span style={{ width: 13, height: 13, borderRadius: "56% 44% 52% 48% / 48% 52% 44% 56%", border: "2px dashed #2E6B22", display: "inline-block" }} />크루 일정</div><div style={{ display: "flex", alignItems: "center", gap: 6 }}><span style={{ width: 13, height: 13, borderRadius: "52% 48% 46% 54%", border: "2px solid #E24D3A", display: "inline-block" }} />오늘</div></div>
               </div>
-              {visits.length === 0 && <div style={{ padding: "22px 16px 0" }}><div style={{ padding: 14, ...cardStyle, color: !crewLoaded ? "#A8A297" : "#514C44", fontSize: 13 }}>{!crewLoaded ? "불러오는 중이에요…" : "클라이밍 일정이 아직 없어요. 투표로 잡아보세요!"}</div></div>}
+              {viewVisits.length === 0 && <div style={{ padding: "22px 16px 0" }}><div style={{ padding: 14, ...cardStyle, color: !viewLoaded ? "#A8A297" : "#514C44", fontSize: 13 }}>{!viewLoaded ? "불러오는 중이에요…" : personal ? "아직 기록이 없어요. 가운데 + 버튼으로 첫 기록을 남겨보세요!" : "클라이밍 일정이 아직 없어요. 투표로 잡아보세요!"}</div></div>}
               {futureVisits.length > 0 && (
                 <div style={{ padding: "22px 16px 0" }}>
                   <div style={{ ...sectionLabel, marginBottom: 10 }}>다가오는 일정</div>
@@ -1199,13 +1322,13 @@ export default function ClimbCrewApp() {
               <div style={{ padding: "56px 16px 8px" }}><div style={H1}>프로필</div></div>
               <div style={{ padding: "14px 16px 0" }}><div style={{ display: "flex", alignItems: "center", gap: 14 }}>{me?.profileImg ? <img src={me.profileImg} alt="" style={{ width: 66, height: 66, borderRadius: "60% 45% 55% 50% / 50% 60% 45% 58%", objectFit: "cover", flexShrink: 0, border: `2.5px solid ${INK}`, transform: "rotate(-2deg)" }} /> : <div style={{ width: 66, height: 66, borderRadius: "60% 45% 55% 50% / 50% 60% 45% 58%", background: hatch(CRAYON.red), border: `2.5px solid ${INK}`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 28, fontWeight: 700, color: "#fff", flexShrink: 0, transform: "rotate(-2deg)" }}>{(me?.nickname || "?")[0]}</div>}<div><div style={{ fontSize: 20, fontWeight: 800 }}>{me?.nickname ?? "…"}</div><div onClick={() => crews.length > 1 && setSwitcherOpen(true)} style={{ fontSize: 13, color: "#514C44", marginTop: 2, cursor: crews.length > 1 ? "pointer" : "default" }}>{crews.length === 0 ? "소속 크루 없음" : crews.length === 1 ? ac?.name : `${crews.length}개 크루 · ${ac?.name ?? ""} ▾`}</div><div style={{ display: "inline-flex", alignItems: "center", gap: 6, marginTop: 8, padding: "5px 11px", borderRadius: 999, background: "#FBF0DA", fontSize: 12, fontWeight: 800, color: "#B4432E" }}><span style={{ width: 10, height: 10, borderRadius: 999, background: "#2F72E0", display: "inline-block" }} />{thetaChip}</div></div></div></div>
               <div style={{ padding: "18px 16px 0" }}>
-                <div style={{ display: "flex", ...cardStyle, overflow: "hidden" }}>{[[String(visits.filter((v: Any) => v.mine).length), "내 일정"], [String(gyms.filter((g) => g.ever).length), "크루 방문 암장"], [String(me?.stats?.myReviewCount ?? 0), "내 리뷰"]].map(([n, l], i) => (<div key={l} style={{ flex: 1, textAlign: "center", padding: "16px 0", borderLeft: i ? "2px dashed rgba(58,54,51,0.25)" : "none" }}><div style={{ fontSize: 20, fontWeight: 800 }}>{n}</div><div style={{ fontSize: 12, color: "#514C44", marginTop: 2 }}>{l}</div></div>))}</div>
-                <div style={{ fontSize: 11, color: "#A8A297", marginTop: 6, textAlign: "center" }}>일정·방문 수치는 {ac?.name ?? "현재 크루"} 기준이에요</div>
+                <div style={{ display: "flex", ...cardStyle, overflow: "hidden" }}>{[[String(me?.stats?.myVisitCount ?? 0), "내 기록"], [String(me?.stats?.favoriteCount ?? 0), "즐겨찾기 ★"], [String(me?.stats?.myReviewCount ?? 0), "내 리뷰"]].map(([n, l], i) => (<div key={l} style={{ flex: 1, textAlign: "center", padding: "16px 0", borderLeft: i ? "2px dashed rgba(58,54,51,0.25)" : "none" }}><div style={{ fontSize: 20, fontWeight: 800 }}>{n}</div><div style={{ fontSize: 12, color: "#514C44", marginTop: 2 }}>{l}</div></div>))}</div>
               </div>
               <div style={{ padding: "24px 16px 0" }}><div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}><div style={sectionLabel}>내 완등 로그</div><div style={{ fontSize: 11, fontWeight: 700, color: "#514C44", background: "#F3EEDF", padding: "3px 9px", borderRadius: 999 }}>준비 중</div></div><div style={{ padding: 14, ...cardStyle, color: "#514C44", fontSize: 13 }}>완등 기록 기능은 준비 중이에요.</div></div>
               <div style={{ padding: "22px 16px 0" }}><div style={{ ...cardStyle, overflow: "hidden" }}>
                 <div onClick={() => showToast("알림 설정은 준비 중이에요")} style={{ display: "flex", alignItems: "center", gap: 8, padding: "15px 16px", borderBottom: "2px dashed rgba(58,54,51,0.2)", cursor: "pointer" }}><div style={{ flex: 1, fontSize: 15, color: "#514C44" }}>알림 설정</div><div style={{ fontSize: 11, fontWeight: 700, color: "#514C44", background: "#F3EEDF", padding: "3px 9px", borderRadius: 999 }}>준비 중</div></div>
-                <div onClick={openCrewManage} style={{ display: "flex", alignItems: "center", gap: 8, padding: "15px 16px", borderBottom: "2px dashed rgba(58,54,51,0.2)", cursor: "pointer" }}><svg width="19" height="19" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="3" stroke={INK} strokeWidth="1.8" /><path d="M12 3.5v2M12 18.5v2M3.5 12h2M18.5 12h2M6 6l1.4 1.4M16.6 16.6 18 18M18 6l-1.4 1.4M7.4 16.6 6 18" stroke={INK} strokeWidth="1.8" strokeLinecap="round" /></svg><div style={{ flex: 1, fontSize: 15, fontWeight: 700 }}>크루 관리</div><div style={{ fontSize: 12, color: "#514C44" }}>멤버 · 초대 · 홈 암장</div><ChevR /></div>
+                {crews.length > 0 && <div onClick={openCrewManage} style={{ display: "flex", alignItems: "center", gap: 8, padding: "15px 16px", borderBottom: "2px dashed rgba(58,54,51,0.2)", cursor: "pointer" }}><svg width="19" height="19" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="3" stroke={INK} strokeWidth="1.8" /><path d="M12 3.5v2M12 18.5v2M3.5 12h2M18.5 12h2M6 6l1.4 1.4M16.6 16.6 18 18M18 6l-1.4 1.4M7.4 16.6 6 18" stroke={INK} strokeWidth="1.8" strokeLinecap="round" /></svg><div style={{ flex: 1, fontSize: 15, fontWeight: 700 }}>크루 관리</div><div style={{ fontSize: 12, color: "#514C44" }}>멤버 · 초대 · 홈 암장</div><ChevR /></div>}
+                {crews.length === 0 && <div onClick={() => go("start")} style={{ display: "flex", alignItems: "center", gap: 8, padding: "15px 16px", borderBottom: "2px dashed rgba(58,54,51,0.2)", cursor: "pointer" }}><div style={{ flex: 1, fontSize: 15, fontWeight: 700 }}>크루 시작하기</div><div style={{ fontSize: 12, color: "#514C44" }}>만들기 · 초대 코드 참여</div><ChevR /></div>}
                 <div onClick={async () => { if (status === "authenticated") await signOut({ redirect: false }); setCrews([]); setActiveCrewId(null); tab("login"); }} style={{ display: "flex", alignItems: "center", padding: "15px 16px", cursor: "pointer" }}><div style={{ flex: 1, fontSize: 15, color: "#D14343" }}>로그아웃</div></div>
               </div></div>
             </div>
@@ -1486,7 +1609,7 @@ export default function ClimbCrewApp() {
           <div style={{ flexShrink: 0, display: "flex", background: "rgba(255,255,255,0.94)", backdropFilter: "blur(12px)", WebkitBackdropFilter: "blur(12px)", borderTop: "2px dashed rgba(58,54,51,0.25)", padding: "8px 4px 26px" }}>
             <button aria-label="홈" onClick={() => tab("home")} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 4, cursor: "pointer", border: "none", background: "transparent", fontFamily: "inherit", padding: 0 }}><svg width="24" height="24" viewBox="0 0 24 24" fill="none"><path d="M3 10.5 12 4l9 6.5V20a1 1 0 0 1-1 1h-4.5v-6h-7v6H4a1 1 0 0 1-1-1z" stroke={tc("home")} strokeWidth="1.8" strokeLinejoin="round" /></svg><div style={{ fontSize: 12, fontWeight: 700, color: tc("home") }}>홈</div></button>
             <button aria-label="탐색" onClick={() => tab("explore")} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 4, cursor: "pointer", border: "none", background: "transparent", fontFamily: "inherit", padding: 0 }}><svg width="24" height="24" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="8.5" stroke={tc("explore")} strokeWidth="1.8" /><path d="M15.5 8.5 13 13l-4.5 2.5L11 11z" stroke={tc("explore")} strokeWidth="1.8" strokeLinejoin="round" /></svg><div style={{ fontSize: 12, fontWeight: 700, color: tc("explore") }}>탐색</div></button>
-            <button aria-label="새 투표" onClick={() => { if (!activeCrewId) { showToast("먼저 크루를 선택해주세요"); return; } openCreatePoll(); }} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "flex-start", cursor: "pointer", border: "none", background: "transparent", fontFamily: "inherit", padding: 0 }}><div style={{ width: 52, height: 52, borderRadius: "52% 48% 46% 54% / 50% 46% 54% 50%", background: hatch(CRAYON.red), display: "flex", alignItems: "center", justifyContent: "center", marginTop: -22, border: `2.5px solid ${INK}`, transform: "rotate(-3deg)" }}><svg width="26" height="26" viewBox="0 0 24 24" fill="none"><path d="M12 5.2 11.8 19M5.2 12.2 19 12" stroke="#fff" strokeWidth="2.6" strokeLinecap="round" /></svg></div><div style={{ fontSize: 12, fontWeight: 700, color: "#514C44", marginTop: 3 }}>새 투표</div></button>
+            <button aria-label={personal ? "기록 추가" : "새 투표"} onClick={() => { if (personal) { openRecordSheet(); return; } if (!activeCrewId) { showToast("먼저 크루를 선택해주세요"); return; } openCreatePoll(); }} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "flex-start", cursor: "pointer", border: "none", background: "transparent", fontFamily: "inherit", padding: 0 }}><div style={{ width: 52, height: 52, borderRadius: "52% 48% 46% 54% / 50% 46% 54% 50%", background: hatch(personal ? CRAYON.green : CRAYON.red), display: "flex", alignItems: "center", justifyContent: "center", marginTop: -22, border: `2.5px solid ${INK}`, transform: "rotate(-3deg)" }}><svg width="26" height="26" viewBox="0 0 24 24" fill="none"><path d="M12 5.2 11.8 19M5.2 12.2 19 12" stroke="#fff" strokeWidth="2.6" strokeLinecap="round" /></svg></div><div style={{ fontSize: 12, fontWeight: 700, color: "#514C44", marginTop: 3 }}>{personal ? "기록 추가" : "새 투표"}</div></button>
             <button aria-label="캘린더" onClick={() => tab("calendar")} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 4, cursor: "pointer", border: "none", background: "transparent", fontFamily: "inherit", padding: 0 }}><svg width="24" height="24" viewBox="0 0 24 24" fill="none"><rect x="3.5" y="5" width="17" height="15.5" rx="2.5" stroke={tc("calendar")} strokeWidth="1.8" /><path d="M3.5 9.5h17M8 3.5v3M16 3.5v3" stroke={tc("calendar")} strokeWidth="1.8" strokeLinecap="round" /></svg><div style={{ fontSize: 12, fontWeight: 700, color: tc("calendar") }}>캘린더</div></button>
             <button aria-label="프로필" onClick={() => tab("profile")} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 4, cursor: "pointer", border: "none", background: "transparent", fontFamily: "inherit", padding: 0 }}><svg width="24" height="24" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="8" r="3.6" stroke={tc("profile")} strokeWidth="1.8" /><path d="M5 20c0-3.6 3.1-5.6 7-5.6s7 2 7 5.6" stroke={tc("profile")} strokeWidth="1.8" strokeLinecap="round" /></svg><div style={{ fontSize: 12, fontWeight: 700, color: tc("profile") }}>프로필</div></button>
           </div>
@@ -1497,10 +1620,18 @@ export default function ClimbCrewApp() {
             <div onClick={() => setSwitcherOpen(false)} style={{ position: "absolute", inset: 0, background: "rgba(28,28,26,0.42)", zIndex: 120, animation: "ccfade .2s ease" }} />
             <div style={{ position: "absolute", left: 0, right: 0, bottom: 0, zIndex: 130, background: "#FFFEFA", borderTop: `2.5px solid ${INK}`, borderRadius: "28px 22px 0 0 / 24px 28px 0 0", padding: "10px 16px 30px", boxShadow: "0 -8px 30px rgba(58,54,51,0.16)", animation: "ccsheet .28s cubic-bezier(.2,.8,.2,1)" }}>
               <div style={{ width: 44, height: 4, borderRadius: 999, background: "rgba(58,54,51,0.3)", margin: "6px auto 14px", transform: "rotate(-1deg)" }} />
-              <div style={{ fontSize: 17, fontWeight: 800, margin: "0 4px 4px" }}>크루 전환</div>
-              <div style={{ fontSize: 12, color: "#514C44", margin: "0 4px 14px" }}>투표와 일정은 크루마다 따로 관리돼요</div>
+              <div style={{ fontSize: 17, fontWeight: 800, margin: "0 4px 4px" }}>모드 전환</div>
+              <div style={{ fontSize: 12, color: "#514C44", margin: "0 4px 14px" }}>개인 기록과 크루 일정은 따로 관리돼요</div>
               <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                {crews.map((c) => { const active = c.id === activeCrewId; return (
+                {/* 개인 모드 — 사람은 무채 규칙 */}
+                <div onClick={switchPersonal} style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 14px", borderRadius: WOBS[1], cursor: "pointer", border: personal ? `2px solid ${INK}` : "2px dashed rgba(58,54,51,0.3)", background: personal ? HILITE : "#FFFEFA" }}>
+                  {me?.profileImg
+                    ? <img src={me.profileImg} alt="" style={{ width: 44, height: 44, borderRadius: "60% 45% 55% 50% / 50% 60% 45% 58%", objectFit: "cover", flexShrink: 0, border: `2px solid ${INK}`, transform: "rotate(-2deg)" }} />
+                    : <div style={{ width: 44, height: 44, borderRadius: "60% 45% 55% 50% / 50% 60% 45% 58%", flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 700, fontSize: 19, background: hatch("58,54,51"), color: "#FFFDF6", border: `2px solid ${INK}`, transform: "rotate(-2deg)" }}>{(me?.nickname || "나")[0]}</div>}
+                  <div style={{ flex: 1, minWidth: 0 }}><div style={{ fontSize: 15, fontWeight: 700 }}>나의 클라이밍</div><div style={{ fontSize: 12, color: "#514C44", marginTop: 2 }}>내 기록 · 즐겨찾기 암장</div></div>
+                  {personal && <svg width="22" height="22" viewBox="0 0 22 22" style={{ flexShrink: 0 }}><circle cx="11" cy="11" r="10" fill="#E24D3A" /><path d="M6.2 11.3 9.4 14.3 15.8 7.3" stroke="#fff" strokeWidth="2.1" fill="none" strokeLinecap="round" strokeLinejoin="round" /></svg>}
+                </div>
+                {crews.map((c) => { const active = !personal && c.id === activeCrewId; return (
                   <div key={c.id} onClick={() => switchCrew(c.id)} style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 14px", borderRadius: WOBS[1], cursor: "pointer", border: active ? `2px solid ${INK}` : "2px dashed rgba(58,54,51,0.3)", background: active ? HILITE : "#FFFEFA" }}><div style={avatarStyle(crewColor(c.id))}>{c.name[0]}</div><div style={{ flex: 1, minWidth: 0 }}><div style={{ fontSize: 15, fontWeight: 700 }}>{c.name}</div><div style={{ fontSize: 12, color: "#514C44", marginTop: 2 }}>{c.region || ""} · 멤버 {c._count?.members ?? 0}명</div></div>{active && <svg width="22" height="22" viewBox="0 0 22 22" style={{ flexShrink: 0 }}><circle cx="11" cy="11" r="10" fill="#E24D3A" /><path d="M6.2 11.3 9.4 14.3 15.8 7.3" stroke="#fff" strokeWidth="2.1" fill="none" strokeLinecap="round" strokeLinejoin="round" /></svg>}</div>
                 ); })}
               </div>
@@ -1545,11 +1676,52 @@ export default function ClimbCrewApp() {
             <div style={{ position: "absolute", left: 0, right: 0, bottom: 0, zIndex: 130, background: "#FFFEFA", borderTop: `2.5px solid ${INK}`, borderRadius: "28px 22px 0 0 / 24px 28px 0 0", padding: "10px 16px 30px", boxShadow: "0 -8px 30px rgba(58,54,51,0.16)", animation: "ccsheet .28s cubic-bezier(.2,.8,.2,1)" }}>
               <div style={{ width: 44, height: 4, borderRadius: 999, background: "rgba(58,54,51,0.3)", margin: "6px auto 14px", transform: "rotate(-1deg)" }} />
               <div style={{ fontSize: 17, fontWeight: 800, margin: "0 4px 2px" }}>방문 기록 추가</div>
-              <div style={{ fontSize: 13, color: "#514C44", margin: "0 4px 14px" }}>{sg?.name ?? ""} · 크루 전체 일정에 추가돼요</div>
+              <div style={{ fontSize: 13, color: "#514C44", margin: "0 4px 14px" }}>{sg?.name ?? ""} · {personal ? "내 기록에 추가돼요 (크루와 무관)" : "크루 전체 일정에 추가돼요"}</div>
               <div style={{ fontSize: 13, fontWeight: 700, color: "#514C44", margin: "0 4px 8px" }}>언제 갔어요?</div>
               <input type="date" value={visitDate} onChange={(e) => setVisitDate(e.target.value)} style={{ width: "100%", height: 50, border: "2px solid #3A3633", borderRadius: 10, padding: "0 14px", fontSize: 15, background: "#fff", outline: "none", marginBottom: 14 }} />
               <button onClick={recordVisit} style={{ width: "100%", height: 52, fontSize: 18, fontWeight: 700, ...crayonBtn(CRAYON.red, 0) }}>방문 기록 추가</button>
               <button onClick={() => setVisitSheetOpen(false)} style={{ width: "100%", height: 46, marginTop: 8, border: `2px solid ${INK}`, borderRadius: WOBS[2], background: "#FFFEFA", fontSize: 16, fontWeight: 700, cursor: "pointer" }}>취소</button>
+            </div>
+          </>
+        )}
+        {recordSheetOpen && (
+          <>
+            <div onClick={() => setRecordSheetOpen(false)} style={{ position: "absolute", inset: 0, background: "rgba(28,28,26,0.42)", zIndex: 120, animation: "ccfade .2s ease" }} />
+            <div style={{ position: "absolute", left: 0, right: 0, bottom: 0, zIndex: 130, background: "#FFFEFA", borderTop: `2.5px solid ${INK}`, borderRadius: "28px 22px 0 0 / 24px 28px 0 0", padding: "10px 16px 24px", boxShadow: "0 -8px 30px rgba(58,54,51,0.16)", animation: "ccsheet .28s cubic-bezier(.2,.8,.2,1)", display: "flex", flexDirection: "column", maxHeight: "85%" }}>
+              <div style={{ width: 44, height: 4, borderRadius: 999, background: "rgba(58,54,51,0.3)", margin: "6px auto 12px", transform: "rotate(-1deg)" }} />
+              <div style={{ fontSize: 17, fontWeight: 800, margin: "0 4px 2px" }}>기록 추가</div>
+              <div style={{ fontSize: 13, color: "#514C44", margin: "0 4px 14px" }}>어디 갔었는지(또는 갈 건지) 남겨두세요 · 내 기록에만 저장돼요</div>
+              {recordGymId ? (
+                <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 14px", borderRadius: WOBS[1], border: `2px solid ${INK}`, background: HILITE, marginBottom: 10, flexShrink: 0 }}>
+                  <div style={avatarStyle(gymById(recordGymId)?.color || "#E24D3A", 36)}>{(gymById(recordGymId)?.name || "?")[0]}</div>
+                  <div style={{ flex: 1, minWidth: 0, fontSize: 15, fontWeight: 700 }}>{gymById(recordGymId)?.name}</div>
+                  <button onClick={() => setRecordGymId(null)} style={{ height: 34, padding: "0 12px", border: `2px solid ${INK}`, borderRadius: WOBS[2], background: "#FFFEFA", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>바꾸기</button>
+                </div>
+              ) : (
+                <>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, height: 46, padding: "0 14px", flexShrink: 0, background: "#fff", border: `2px solid ${INK}`, borderRadius: WOBS[2] }}>
+                    <svg width="17" height="17" viewBox="0 0 20 20" fill="none"><circle cx="9" cy="9" r="6.2" stroke="#514C44" strokeWidth="1.8" /><path d="M14 14l4 4" stroke="#514C44" strokeWidth="1.8" strokeLinecap="round" /></svg>
+                    <input value={recordGymQ} onChange={(e) => setRecordGymQ(e.target.value)} placeholder="어느 암장이었어요?" style={{ flex: 1, border: "none", background: "transparent", outline: "none", fontSize: 15, minWidth: 0 }} />
+                  </div>
+                  <div style={{ flex: 1, overflowY: "auto", marginTop: 8, display: "flex", flexDirection: "column", gap: 8, minHeight: 80 }}>
+                    {(recordGymQ.trim() ? gyms.filter((g) => (g.name + " " + g.loc).toLowerCase().includes(recordGymQ.trim().toLowerCase())) : gyms.filter((g) => g.isHome)).slice(0, 30).map((g) => (
+                      <div key={g.id} onClick={() => setRecordGymId(g.id)} style={{ display: "flex", alignItems: "center", gap: 10, padding: "11px 14px", ...cardStyle, borderRadius: WOBS[3], cursor: "pointer", flexShrink: 0 }}>
+                        <div style={avatarStyle(g.color, 32)}>{g.name[0]}</div>
+                        <div style={{ flex: 1, minWidth: 0 }}><div style={{ fontSize: 14, fontWeight: 700 }}>{g.name}</div><div style={{ fontSize: 12, color: "#514C44" }}>{g.loc}</div></div>
+                        {g.isFavorite && <span style={{ fontSize: 13, color: "#E0921A" }}>★</span>}
+                      </div>
+                    ))}
+                    {!recordGymQ.trim() && !gyms.some((g) => g.isHome) && <div style={{ padding: 14, color: "#514C44", fontSize: 13, textAlign: "center" }}>검색해서 암장을 골라주세요</div>}
+                  </div>
+                </>
+              )}
+              {recordGymId && (
+                <>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: "#514C44", margin: "4px 4px 8px" }}>언제 갔어요? (미래 날짜면 일정이 돼요)</div>
+                  <input type="date" value={recordDate} onChange={(e) => setRecordDate(e.target.value)} style={{ width: "100%", height: 50, border: "2px solid #3A3633", borderRadius: 10, padding: "0 14px", fontSize: 15, background: "#fff", outline: "none", marginBottom: 14, flexShrink: 0 }} />
+                </>
+              )}
+              <button onClick={addPersonalVisit} disabled={!recordGymId} style={{ width: "100%", height: 52, marginTop: 4, flexShrink: 0, fontSize: 18, fontWeight: 700, ...crayonBtn(CRAYON.green, 0), opacity: recordGymId ? 1 : 0.5 }}>기록 추가</button>
             </div>
           </>
         )}
@@ -1683,9 +1855,14 @@ export default function ClimbCrewApp() {
                 <div style={{ width: 44, height: 4, borderRadius: 999, background: "rgba(58,54,51,0.3)", margin: "6px auto 12px", transform: "rotate(-1deg)" }} />
                 <div style={{ display: "flex", alignItems: "center", gap: 10, margin: "0 2px 4px" }}>
                   <div style={{ width: 40, height: 40, borderRadius: 12, flexShrink: 0, background: future ? "#FBF0DA" : "#E4F5EC", display: "flex", alignItems: "center", justifyContent: "center" }}><svg width="20" height="20" viewBox="0 0 24 24" fill="none"><rect x="3.5" y="5" width="17" height="15.5" rx="2.5" stroke="#E24D3A" strokeWidth="1.8" /><path d="M3.5 9.5h17M8 3.5v3M16 3.5v3" stroke="#E24D3A" strokeWidth="1.8" strokeLinecap="round" /></svg></div>
-                  <div style={{ flex: 1, minWidth: 0 }}><div style={{ fontSize: 19, fontWeight: 800 }}>{v.gym?.name}</div><div style={{ fontSize: 13, color: "#514C44", marginTop: 1 }}>{fmtDate(v.date)} · {v.source === "VOTE" ? "투표로 확정" : "직접 추가"}</div></div>
-                  {v.mine && <span style={{ fontSize: 11, fontWeight: 800, color: "#2E6B22", background: "#CDEBD4", border: "1.5px solid #2E6B22", borderRadius: 999, padding: "3px 9px", flexShrink: 0 }}>내가 가요</span>}
+                  <div style={{ flex: 1, minWidth: 0 }}><div style={{ fontSize: 19, fontWeight: 800 }}>{v.gym?.name}</div><div style={{ fontSize: 13, color: "#514C44", marginTop: 1 }}>{fmtDate(v.date)} · {v.personal ? "내 기록" : v.source === "VOTE" ? "투표로 확정" : "직접 추가"}</div></div>
+                  {v.personal && <span style={{ fontSize: 11, fontWeight: 800, color: "#514C44", background: "#F3EEDF", border: "1.5px solid rgba(58,54,51,0.4)", borderRadius: 999, padding: "3px 9px", flexShrink: 0 }}>개인</span>}
+                  {!v.personal && v.crewName && personal && <span style={{ fontSize: 11, fontWeight: 800, color: "#2456B0", background: "#E6EEFB", border: "1.5px solid #2456B0", borderRadius: 999, padding: "3px 9px", flexShrink: 0 }}>{v.crewName}</span>}
+                  {!v.personal && v.mine && !personal && <span style={{ fontSize: 11, fontWeight: 800, color: "#2E6B22", background: "#CDEBD4", border: "1.5px solid #2E6B22", borderRadius: 999, padding: "3px 9px", flexShrink: 0 }}>내가 가요</span>}
                 </div>
+                {v.personal ? (
+                  <div style={{ margin: "16px 2px 0", padding: 14, ...cardStyle, fontSize: 13, color: "#514C44", lineHeight: 1.5 }}>크루와 무관한 내 기록이에요. 캘린더에서 언제든 지울 수 있어요.</div>
+                ) : (<>
                 <div style={{ ...sectionLabel, margin: "16px 2px 10px" }}>가는 사람 {atts.length}명</div>
                 <div style={{ flex: 1, overflowY: "auto", display: "flex", flexDirection: "column", gap: 8, minHeight: 60 }}>
                   {atts.length === 0 && <div style={{ padding: 14, ...cardStyle, color: "#514C44", fontSize: 13 }}>아직 아무도 없어요. 먼저 참여해보세요!</div>}
@@ -1696,12 +1873,16 @@ export default function ClimbCrewApp() {
                     </div>
                   ))}
                 </div>
-                {future && (
+                {future && !personal && (
                   <div style={{ display: "flex", gap: 8, marginTop: 14, flexShrink: 0 }}>
                     <button onClick={() => attendVisit(v, !v.mine)} style={{ flex: 1, height: 48, border: `2px solid ${INK}`, borderRadius: WOBS[2], background: v.mine ? "#FFFEFA" : HILITE, fontSize: 16, fontWeight: 700, cursor: "pointer" }}>{v.mine ? "안 갈래요" : "나도 갈래요"}</button>
                     {canEdit && <button onClick={() => { openVisitEdit(v); setDetailVisitId(null); }} style={{ height: 48, padding: "0 16px", border: `2px solid ${INK}`, borderRadius: WOBS[2], background: "#FFFEFA", fontSize: 16, fontWeight: 700, cursor: "pointer" }}>변경</button>}
                     {canEdit && <button onClick={() => { if (typeof window !== "undefined" && window.confirm("이 일정을 취소할까요?")) { cancelVisit(v); setDetailVisitId(null); } }} style={{ height: 48, padding: "0 16px", border: "2px solid #C23A24", borderRadius: WOBS[2], background: "#FFFEFA", color: "#C23A24", fontSize: 16, fontWeight: 700, cursor: "pointer" }}>취소</button>}
                   </div>
+                )}
+                </>)}
+                {v.personal && (
+                  <button onClick={() => { if (typeof window !== "undefined" && window.confirm("이 기록을 삭제할까요? 되돌릴 수 없어요.")) { deletePersonalVisit(v.id); setDetailVisitId(null); } }} style={{ marginTop: 14, height: 48, flexShrink: 0, border: "2px solid #C23A24", borderRadius: WOBS[2], background: "#FFFEFA", color: "#C23A24", fontSize: 16, fontWeight: 700, cursor: "pointer" }}>기록 삭제</button>
                 )}
               </div>
             </>
