@@ -40,6 +40,7 @@ export const api = {
   visitCancel: (visitId: string) => fetch(`/api/visits/${visitId}`, { method: "DELETE" }).then(j),
 
   post: <T = unknown>(path: string, body: unknown) => fetch(path, jsonInit("POST", body)).then<T>(j),
+  del: <T = unknown>(path: string) => fetch(path, { method: "DELETE" }).then<T>(j),
   patch: <T = unknown>(path: string, body: unknown) => fetch(path, jsonInit("PATCH", body)).then<T>(j),
   put: <T = unknown>(path: string, body: unknown) => fetch(path, jsonInit("PUT", body)).then<T>(j),
 };

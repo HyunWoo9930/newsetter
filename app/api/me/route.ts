@@ -15,8 +15,12 @@ export async function GET() {
   });
   if (!user) return notFound("유저");
 
-  const ability = await estimateUserAbility(userId);
-  return json({ ...user, ability });
+  const [ability, myReviewCount, myLogCount] = await Promise.all([
+    estimateUserAbility(userId),
+    prisma.review.count({ where: { userId } }),
+    prisma.climbLog.count({ where: { userId } }),
+  ]);
+  return json({ ...user, ability, stats: { myReviewCount, myLogCount } });
 }
 
 const schema = z.object({

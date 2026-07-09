@@ -34,7 +34,7 @@ const REVIEW_TAGS = ["세팅 좋음", "초보 친화", "붐빔", "주차 편함"
 const WD = ["일", "월", "화", "수", "목", "금", "토"];
 const REL_FEEL: Record<string, string> = { 쉬움: "EASIER", 적정: "AS_EXPECTED", 어려움: "HARDER" };
 
-const fmtDate = (iso: string) => { const d = new Date(iso); return `${d.getMonth() + 1}월 ${d.getDate()}일 (${WD[d.getDay()]})`; };
+const fmtDate = (iso: string) => { const d = new Date(iso); const yr = d.getFullYear() !== new Date().getFullYear() ? `${d.getFullYear()}년 ` : ""; return `${yr}${d.getMonth() + 1}월 ${d.getDate()}일 (${WD[d.getDay()]})`; };
 const fmtDateTime = (iso: string) => { const d = new Date(iso); return `${fmtDate(iso)} ${String(d.getHours()).padStart(2, "0")}:00~`; };
 const fmtDeadline = (iso: string | null) => { if (!iso) return "상시"; const diff = Math.ceil((new Date(iso).getTime() - Date.now()) / 86400000); return diff > 0 ? `D-${diff} 마감` : "마감"; };
 const rel = (iso: string) => { const diff = Math.floor((Date.now() - new Date(iso).getTime()) / 86400000); return diff <= 0 ? "오늘" : diff < 7 ? `${diff}일 전` : `${Math.floor(diff / 7)}주 전`; };
@@ -79,23 +79,16 @@ const PlayDot = () => (<svg width="12" height="12" viewBox="0 0 12 12"><path d="
 /* eslint-disable @typescript-eslint/no-explicit-any */
 type Any = any;
 
-// 새로고침해도 현재 화면을 유지하기 위한 네비게이션 스냅샷 (sessionStorage)
-const NAV_KEY = "setter.nav";
-// 로그인 없이 바로 복원해도 되는(디테일 포함) 화면들. 폼/모달성 화면은 제외 → 홈으로.
-const RESTORABLE = new Set(["home", "explore", "calendar", "profile", "gymDetail", "probList", "probDetail", "record"]);
-function readNav(): Any {
-  if (typeof window === "undefined") return null;
-  try { return JSON.parse(sessionStorage.getItem(NAV_KEY) || "null"); } catch { return null; }
-}
+// URL 로 복원해도 되는 화면들 (딥링크·새로고침). 폼/모달성 화면은 제외 → 홈으로.
+const LINKABLE = new Set(["home", "explore", "calendar", "profile", "vote", "gymDetail", "crewManage", "probList", "probDetail"]);
 
 export default function ClimbCrewApp() {
-  const [nav0] = useState(readNav); // 마운트 시 1회 로드한 스냅샷
-  // 네비게이션 / 입력 상태
+  // 네비게이션 / 입력 상태 — 화면 상태는 URL(?s=…)과 동기화 (뒤로가기·새로고침·딥링크)
   const [screen, setScreen] = useState("login");
-  const [hist, setHist] = useState<string[]>(() => (Array.isArray(nav0?.hist) ? nav0.hist : []));
-  const [selGym, setSelGym] = useState<string | null>(() => nav0?.selGym ?? null);
-  const [selSettingId, setSelSettingId] = useState<string | null>(() => nav0?.selSettingId ?? null);
-  const [selProb, setSelProb] = useState<string | null>(() => nav0?.selProb ?? null);
+  const [selGym, setSelGym] = useState<string | null>(null);
+  const [selSettingId, setSelSettingId] = useState<string | null>(null);
+  const [selProb, setSelProb] = useState<string | null>(null);
+  const [selPollId, setSelPollId] = useState<string | null>(null);
   const [switcherOpen, setSwitcherOpen] = useState(false);
   const [toast, setToast] = useState("");
   const [sort, setSort] = useState<"easy" | "hard">("easy");
@@ -112,7 +105,7 @@ export default function ClimbCrewApp() {
   // 라이브 데이터
   const [me, setMe] = useState<Any>(null);
   const [crews, setCrews] = useState<Any[]>([]);
-  const [activeCrewId, setActiveCrewId] = useState<string | null>(() => nav0?.activeCrewId ?? null);
+  const [activeCrewId, setActiveCrewId] = useState<string | null>(null);
   const [crewGyms, setCrewGyms] = useState<Any[]>([]);
   const [polls, setPolls] = useState<Any[]>([]);
   const [visits, setVisits] = useState<Any[]>([]);
@@ -170,25 +163,104 @@ export default function ClimbCrewApp() {
   const [reviewRating, setReviewRating] = useState(0);
   const [reviewTags, setReviewTags] = useState<string[]>([]);
   const [reviewText, setReviewText] = useState("");
+  const [deletePollSheetOpen, setDeletePollSheetOpen] = useState(false);
+  const [visitSheetOpen, setVisitSheetOpen] = useState(false);
+  const [visitDate, setVisitDate] = useState("");
+  const [crewLoaded, setCrewLoaded] = useState(false);
+  const [creating, setCreating] = useState(false);
+  const [crewEditOpen, setCrewEditOpen] = useState(false);
+  const [crewEdit, setCrewEdit] = useState({ name: "", bio: "", region: "", kakao: "" });
+  const [leaveSheetOpen, setLeaveSheetOpen] = useState(false);
+  // 지도 키가 없으면 목록이 기본 — 지도 단독 의존 탈피
+  const [exploreView, setExploreView] = useState<"map" | "list">(process.env.NEXT_PUBLIC_NAVER_MAP_CLIENT_ID ? "map" : "list");
 
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const showToast = useCallback((m: string) => { setToast(m); clearTimeout(timer.current); timer.current = setTimeout(() => setToast(""), 1900); }, []);
 
-  // 네비게이션
-  const go = (sc: string) => { setHist((h) => [...h, screen]); setScreen(sc); };
-  const tab = (sc: string) => { setHist([]); setScreen(sc); };
-  const back = () => { setHist((h) => { const n = [...h]; const p = n.pop() || "home"; setScreen(p); return n; }); };
-  const openGym = (id: string) => { setHist((h) => [...h, screen]); setSelGym(id); setScreen("gymDetail"); };
-  const openProblems = (gymId: string, settingId: string | null) => { setHist((h) => [...h, screen]); setSelGym(gymId); setSelSettingId(settingId); setScreen("probList"); };
-  const openProb = (id: string) => { setHist((h) => [...h, screen]); setSelProb(id); setScreen("probDetail"); };
+  // 네비게이션 — 브라우저 히스토리와 동기화 (모바일 뒤로가기 · 새로고침 복원 · 딥링크)
+  type NavSel = { gym?: string | null; setting?: string | null; prob?: string | null; poll?: string | null };
+  const navDepth = useRef(0);
+  const navState = (sc: string, sel: NavSel = {}) => ({ sc, gym: sel.gym ?? null, setting: sel.setting ?? null, prob: sel.prob ?? null, poll: sel.poll ?? null });
+  const urlOf = (st: ReturnType<typeof navState>) => {
+    const q = new URLSearchParams();
+    if (st.sc !== "home") q.set("s", st.sc);
+    if (st.gym) q.set("gym", st.gym);
+    if (st.setting) q.set("set", st.setting);
+    if (st.prob) q.set("prob", st.prob);
+    if (st.poll) q.set("poll", st.poll);
+    const s = q.toString();
+    return s ? `/?${s}` : "/";
+  };
+  const pushNav = (sc: string, sel: NavSel = {}) => { const st = navState(sc, sel); navDepth.current += 1; window.history.pushState({ ...st, d: navDepth.current }, "", urlOf(st)); };
+  const replaceNav = (sc: string, sel: NavSel = {}) => { const st = navState(sc, sel); window.history.replaceState({ ...st, d: navDepth.current }, "", urlOf(st)); };
+  const go = (sc: string) => { pushNav(sc); setScreen(sc); };
+  const tab = (sc: string) => { pushNav(sc); setScreen(sc); };
+  const back = () => {
+    if (navDepth.current > 0) { window.history.back(); return; }
+    // 딥링크로 바로 들어온 경우 등 — 뒤가 없으면 홈으로
+    replaceNav("home"); setScreen("home");
+  };
+  const openGym = (id: string) => { setSelGym(id); pushNav("gymDetail", { gym: id }); setScreen("gymDetail"); };
+  const openProblems = (gymId: string, settingId: string | null) => { setSelGym(gymId); setSelSettingId(settingId); pushNav("probList", { gym: gymId, setting: settingId }); setScreen("probList"); };
+  const openProb = (id: string) => { setSelProb(id); pushNav("probDetail", { prob: id }); setScreen("probDetail"); };
+  const goVote = (pollId: string) => { setSelPollId(pollId); pushNav("vote", { poll: pollId }); setScreen("vote"); };
+
+  // 뒤로가기/앞으로가기 → 히스토리 상태에서 화면 복원
+  useEffect(() => {
+    const onPop = (e: PopStateEvent) => {
+      const st = e.state as (ReturnType<typeof navState> & { d?: number }) | null;
+      navDepth.current = st?.d ?? 0;
+      if (!st?.sc) { setScreen("home"); return; }
+      if (st.gym) setSelGym(st.gym);
+      if (st.setting) setSelSettingId(st.setting);
+      if (st.prob) setSelProb(st.prob);
+      if (st.poll) setSelPollId(st.poll);
+      setScreen(st.sc);
+    };
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, []);
 
   /* ===== 데이터 로딩 ===== */
-  // 공개 데이터 + 초대코드 (마운트 1회)
+  // 공개 데이터 + 초대코드 + 딥링크 파라미터 (마운트 1회)
+  const pendingLink = useRef<{ s: string; poll: string | null; gym: string | null; prob: string | null; setting: string | null; crew: string | null } | null>(null);
   useEffect(() => {
     api.gymsList().then(setAllGymsList).catch(() => {});
-    const inv = new URLSearchParams(window.location.search).get("invite");
-    if (inv) { setJoinCode(inv); setInvitePending(true); }
+    const sp = new URLSearchParams(window.location.search);
+    const inv = sp.get("invite");
+    if (inv) { setJoinCode(inv.toUpperCase()); setInvitePending(true); }
+    const s = sp.get("s");
+    if (s) pendingLink.current = { s, poll: sp.get("poll"), gym: sp.get("gym"), prob: sp.get("prob"), setting: sp.get("set"), crew: sp.get("crew") };
   }, []);
+
+  // 앱 진입 — 딥링크(또는 새로고침 시 URL)가 있으면 해당 화면으로, 아니면 홈/시작 화면으로
+  const enterApp = (cs: Any[]) => {
+    const link = pendingLink.current;
+    pendingLink.current = null;
+    if (invitePending || !cs.length) {
+      startWasAuto.current = !cs.length && !invitePending; // 크루 없음으로 자동 이동한 경우만 — 뒤늦게 크루 로드 시 홈 복구 대상
+      navDepth.current = 0; replaceNav("start"); setScreen("start"); return;
+    }
+    startWasAuto.current = false;
+    let sc = "home";
+    const sel: NavSel = {};
+    if (link && LINKABLE.has(link.s)) {
+      const target = link.crew ? cs.find((c: Any) => c.id === link.crew) : null;
+      if (link.crew && !target) {
+        showToast("크루 멤버만 볼 수 있는 링크예요");
+      } else {
+        if (target) setActiveCrewId(target.id);
+        sc = link.s;
+        if (link.poll) { setSelPollId(link.poll); sel.poll = link.poll; }
+        if (link.gym) { setSelGym(link.gym); sel.gym = link.gym; }
+        if (link.prob) { setSelProb(link.prob); sel.prob = link.prob; }
+        if (link.setting) { setSelSettingId(link.setting); sel.setting = link.setting; }
+      }
+    }
+    navDepth.current = 0;
+    replaceNav(sc, sel);
+    setScreen(sc);
+  };
 
   const loadCrews = useCallback(() =>
     api.crews().then((cs: Any) => { setCrews(cs); setActiveCrewId((prev) => prev ?? (cs[0]?.id ?? null)); return cs as Any[]; }), []);
@@ -223,6 +295,7 @@ export default function ClimbCrewApp() {
         poll_created: "🗳️ 새 투표가 올라왔어요",
         vote_submitted: "✍️ 누군가 투표했어요",
         poll_closed: `✅ 투표 마감: ${e.title ?? ""}`,
+        poll_deleted: "🗑️ 투표가 삭제됐어요",
         visit_created: "📅 새 일정이 잡혔어요",
         visit_updated: "🔁 일정이 변경됐어요",
         visit_canceled: "❌ 일정이 취소됐어요",
@@ -253,50 +326,37 @@ export default function ClimbCrewApp() {
     document.head.appendChild(s);
   }, []);
 
-  // 카카오 세션이 확인되면 로그인 화면을 건너뜀 (새로고침이면 이전 화면 복원)
+  // 카카오 세션이 확인되면 로그인 화면을 건너뜀 (딥링크·새로고침 URL이 있으면 그 화면으로 복원)
   useEffect(() => {
-    if (status === "authenticated" && bootstrapped && screen === "login") {
-      const saved = nav0?.screen as string | undefined;
-      // 저장된 상세화면은 필요한 선택값이 있을 때만 복원
-      const savedOk = !!saved && RESTORABLE.has(saved) &&
-        (saved !== "gymDetail" || !!selGym) &&
-        (saved !== "probList" || !!selGym) &&
-        (saved !== "probDetail" || !!selProb);
-      let next: string;
-      if (invitePending || !crews.length) next = "start";
-      else if (savedOk) next = saved as string;
-      else next = "home";
-      startWasAuto.current = next === "start";
-      if (!savedOk) setHist([]); // 복원이 아니면 백스택 초기화
-      setScreen(next);
-    }
-  }, [status, bootstrapped, screen, crews.length, invitePending]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // 화면/선택/크루/백스택을 세션에 저장 (새로고침 복원용). 로그인 화면은 저장 안 함.
+    if (status === "authenticated" && bootstrapped && screen === "login") enterApp(crews);
+  }, [status, bootstrapped, screen, crews]); // eslint-disable-line react-hooks/exhaustive-deps
+  // 개발 모드(카카오 미연동)에선 dev 유저가 확인되면 자동 진입 — 새로고침해도 화면 유지
   useEffect(() => {
-    if (typeof window === "undefined") return;
-    try {
-      if (screen === "login") sessionStorage.removeItem(NAV_KEY);
-      else sessionStorage.setItem(NAV_KEY, JSON.stringify({ screen, hist, activeCrewId, selGym, selSettingId, selProb }));
-    } catch { /* storage 불가 시 무시 */ }
-  }, [screen, hist, activeCrewId, selGym, selSettingId, selProb]);
+    if (!kakaoEnabled && bootstrapped && me && screen === "login") enterApp(crews);
+  }, [kakaoEnabled, bootstrapped, me, screen, crews]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // 크루가 없어 자동으로 start 로 갔는데, 뒤늦게 크루가 로드되면 홈으로 복구.
   // (사용자가 '코드로 참여'로 직접 온 start 는 startWasAuto=false 라 건드리지 않음)
   useEffect(() => {
     if (status === "authenticated" && screen === "start" && startWasAuto.current && !invitePending && crews.length > 0) {
       startWasAuto.current = false;
-      setHist([]); setScreen("home");
+      navDepth.current = 0; replaceNav("home"); setScreen("home");
     }
-  }, [status, screen, crews.length, invitePending]);
+  }, [status, screen, crews.length, invitePending]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const reloadCrew = useCallback((id: string) => {
-    api.crewGyms(id).then((rows: Any) => { setCrewGyms(rows); const first = rows.find((r: Any) => r.latestSetting); if (first) setSelSettingId((s) => s ?? first.latestSetting.id); }).catch(() => {});
-    api.crewPolls(id).then(setPolls).catch(() => {});
-    api.crewVisits(id).then(setVisits).catch(() => {});
-    api.crew(id).then(setCrewDetail).catch(() => {});
-    api.requests(id).then(setRequests).catch(() => setRequests([]));
-  }, []);
+    setCrewLoaded(false);
+    Promise.allSettled([
+      api.crewGyms(id).then((rows: Any) => { setCrewGyms(rows); const first = rows.find((r: Any) => r.latestSetting); if (first) setSelSettingId((s) => s ?? first.latestSetting.id); }),
+      api.crewPolls(id).then(setPolls),
+      api.crewVisits(id).then(setVisits),
+      api.crew(id).then(setCrewDetail),
+      api.requests(id).then(setRequests).catch(() => setRequests([])), // 멤버는 신청 목록 권한이 없을 수 있음 — 정상
+    ]).then((rs) => {
+      setCrewLoaded(true);
+      if (rs.some((r) => r.status === "rejected")) showToast("일부 데이터를 불러오지 못했어요");
+    });
+  }, [showToast]);
   useEffect(() => { if (activeCrewId) reloadCrew(activeCrewId); }, [activeCrewId, reloadCrew]);
 
   // 암장 상세
@@ -319,8 +379,9 @@ export default function ClimbCrewApp() {
     if (g?.latestSetting) api.problems(g.latestSetting.id).then((d: Any) => setRecProblems(d.colors.flatMap((c: Any) => c.problems))).catch(() => setRecProblems([]));
   }, [screen, recGym, crewGyms]);
 
-  // 투표 선택 초기화
-  const openPoll = polls.find((p) => p.status === "OPEN");
+  // 진행 중인 투표 — 여러 개 열려 있을 수 있음. 투표 화면은 선택된 것(없으면 첫 번째)을 보여줌.
+  const openPolls = polls.filter((p) => p.status === "OPEN");
+  const openPoll = (selPollId ? openPolls.find((p) => p.id === selPollId) : null) || openPolls[0] || null;
   useEffect(() => {
     if (screen !== "vote" || !openPoll) return;
     api.poll(openPoll.id).then((p: Any) => {
@@ -329,11 +390,23 @@ export default function ClimbCrewApp() {
       const gy: Record<string, boolean> = {}; p.myVotes.gymOptionIds.forEach((id: string) => (gy[id] = true));
       setVoteDates(d); setVoteGyms(gy); setVoteSubmitted(p.myVotes.dateOptionIds.length + p.myVotes.gymOptionIds.length > 0);
       setVoteTab("date"); setFocusDay(null);
-    }).catch(() => {});
-  }, [screen, openPoll?.id]);
+    }).catch(() => showToast("투표를 불러오지 못했어요"));
+  }, [screen, openPoll?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   /* ===== 액션 ===== */
-  const createCrew = async () => { if (!form.name.trim()) { showToast("크루 이름을 입력해주세요"); return; } try { const c: Any = await api.post("/api/crews", { name: form.name, description: form.bio, region: form.region, openChatUrl: form.kakao, homeGymIds: crewHomeGymIds }); const cs: Any = await api.crews(); setCrews(cs); setActiveCrewId(c.id); setCrewHomeGymIds([]); setCreateGymQ(""); go("invite"); } catch (e: Any) { showToast(e.message); } };
+  const createCrew = async () => {
+    if (creating) return; // 더블 탭으로 크루가 복제되지 않게
+    if (!form.name.trim()) { showToast("크루 이름을 입력해주세요"); return; }
+    setCreating(true);
+    try {
+      const c: Any = await api.post("/api/crews", { name: form.name, description: form.bio, region: form.region, openChatUrl: form.kakao, homeGymIds: crewHomeGymIds });
+      const cs: Any = await api.crews();
+      setCrews(cs); setActiveCrewId(c.id); setCrewHomeGymIds([]); setCreateGymQ("");
+      setForm({ name: "", bio: "", region: "", kakao: "" }); // 뒤로가기로 돌아와도 재생성되지 않게 비움
+      go("invite");
+    } catch (e: Any) { showToast(e.message); }
+    finally { setCreating(false); }
+  };
   const joinByCode = async () => { if (!joinCode.trim()) { showToast("초대 코드를 입력해주세요"); return; } try { const r: Any = await api.post("/api/crews/join", { inviteCode: joinCode }); const cs: Any = await api.crews(); setCrews(cs); setActiveCrewId(r.crewId); tab("home"); showToast("크루에 참여했어요"); } catch (e: Any) { showToast(e.message); } };
   const handleReq = async (userId: string, name: string, ok: boolean) => { try { await api.patch(`/api/crews/${activeCrewId}/requests/${userId}`, { action: ok ? "approve" : "reject" }); showToast(ok ? `${name}님을 승인했어요` : `${name}님 신청을 거절했어요`); if (activeCrewId) reloadCrew(activeCrewId); } catch (e: Any) { showToast(e.message); } };
   const switchCrew = (id: string) => { const c = crews.find((x) => x.id === id); setActiveCrewId(id); setSwitcherOpen(false); tab("home"); showToast(`${c?.name ?? ""}(으)로 전환했어요`); };
@@ -357,7 +430,19 @@ export default function ClimbCrewApp() {
     if (!target) { showToast(`${recColor} 문제가 아직 없어요 · 먼저 등록해주세요`); return; }
     try { await api.post(`/api/problems/${target.id}/logs`, { sent: true, relativeFeel: REL_FEEL[recFeel], honey: recHoney, content: recMemo || undefined }); showToast("완등 기록을 저장했어요"); tab("home"); } catch (e: Any) { showToast(e.message); }
   };
-  const recordVisit = async () => { if (!activeCrewId || !selGym) return; try { await api.post(`/api/crews/${activeCrewId}/visits`, { gymId: selGym, date: new Date().toISOString() }); showToast("방문 기록을 추가했어요"); api.crewVisits(activeCrewId).then(setVisits); if (selGym) api.gym(selGym, activeCrewId).then(setGymDetail); } catch (e: Any) { showToast(e.message); } };
+  // 방문/일정 추가 — 실수 탭 방지를 위해 날짜 확인 시트를 거침
+  const openVisitSheet = () => { const t = new Date(); setVisitDate(`${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, "0")}-${String(t.getDate()).padStart(2, "0")}`); setVisitSheetOpen(true); };
+  const recordVisit = async () => {
+    if (!activeCrewId || !selGym || !visitDate) return;
+    try {
+      await api.post(`/api/crews/${activeCrewId}/visits`, { gymId: selGym, date: new Date(`${visitDate}T12:00:00`).toISOString() });
+      setVisitSheetOpen(false);
+      showToast("방문 기록을 추가했어요");
+      api.crewVisits(activeCrewId).then(setVisits);
+      api.crewGyms(activeCrewId).then(setCrewGyms);
+      if (selGym) api.gym(selGym, activeCrewId).then(setGymDetail);
+    } catch (e: Any) { showToast(e.message); }
+  };
 
   // 일정(방문) 참여/취소/변경 — #2,#3,#4
   const reloadVisits = () => { if (activeCrewId) { api.crewVisits(activeCrewId).then(setVisits).catch(() => {}); api.crewGyms(activeCrewId).then(setCrewGyms).catch(() => {}); } };
@@ -372,6 +457,8 @@ export default function ClimbCrewApp() {
   const tapRangeDay = (ds: string) => setPollRange((r) => {
     if (!r.start || r.end) return { start: ds, end: null };
     if (ds < r.start) return { start: ds, end: null };
+    const days = Math.round((new Date(ds).getTime() - new Date(r.start).getTime()) / 86400000) + 1;
+    if (days > 31) { showToast("날짜 범위는 최대 31일까지예요"); return r; }
     return { start: r.start, end: ds };
   });
   const toggleHomeGym = (id: string) => {
@@ -379,6 +466,41 @@ export default function ClimbCrewApp() {
     setCrewHomeGymIds((h) => (h.includes(id) ? h.filter((x) => x !== id) : h.length >= 4 ? h : [...h, id]));
   };
   const openCrewManage = () => { setManageHomeIds(crewGyms.filter((g) => g.isHome).map((g) => g.id)); setManageQ(""); if (activeCrewId) reloadCrew(activeCrewId); go("crewManage"); };
+  const openCrewEdit = () => { setCrewEdit({ name: crewDetail?.name ?? ac?.name ?? "", bio: crewDetail?.description ?? "", region: crewDetail?.region ?? "", kakao: crewDetail?.openChatUrl ?? "" }); setCrewEditOpen(true); };
+  const saveCrewEdit = async () => {
+    if (!activeCrewId) return;
+    if (!crewEdit.name.trim()) { showToast("크루 이름을 입력해주세요"); return; }
+    try {
+      await api.patch(`/api/crews/${activeCrewId}`, { name: crewEdit.name.trim(), description: crewEdit.bio || null, region: crewEdit.region || null, openChatUrl: crewEdit.kakao || null });
+      setCrewEditOpen(false);
+      showToast("크루 정보를 수정했어요");
+      api.crew(activeCrewId).then(setCrewDetail);
+      api.crews().then(setCrews);
+    } catch (e: Any) { showToast(e.message); }
+  };
+  const leaveCrew = async () => {
+    if (!activeCrewId) return;
+    try {
+      const r: Any = await api.post(`/api/crews/${activeCrewId}/leave`, {});
+      setLeaveSheetOpen(false);
+      showToast(r.crewDeleted ? "크루를 삭제했어요" : "크루에서 나왔어요");
+      const cs: Any = await api.crews();
+      setCrews(cs);
+      if (cs[0]) { setActiveCrewId(cs[0].id); tab("home"); }
+      else { setActiveCrewId(null); setCrewDetail(null); setCrewGyms([]); setPolls([]); setVisits([]); setRequests([]); startWasAuto.current = false; tab("start"); }
+    } catch (e: Any) { showToast(e.message); }
+  };
+  const deletePoll = async () => {
+    if (!openPoll) return;
+    try {
+      await api.del(`/api/polls/${openPoll.id}`);
+      setDeletePollSheetOpen(false);
+      setSelPollId(null);
+      showToast("투표를 삭제했어요");
+      if (activeCrewId) api.crewPolls(activeCrewId).then(setPolls);
+      tab("home");
+    } catch (e: Any) { showToast(e.message); }
+  };
   const openHomeEdit = () => { setManageHomeIds(crewGyms.filter((g) => g.isHome).map((g) => g.id)); setManageQ(""); setHomeEditOpen(true); };
   const toggleManageHome = (id: string) => {
     if (!manageHomeIds.includes(id) && manageHomeIds.length >= 4) showToast("홈 암장은 최대 4곳이에요");
@@ -400,10 +522,12 @@ export default function ClimbCrewApp() {
       showToast("리뷰를 등록했어요");
     } catch (e: Any) { showToast(e.message); }
   };
+  // 투표 딥링크 — 받은 사람이 로그인 후 바로 해당 투표로 이동
+  const pollShareUrl = (pollId?: string | null) => `${window.location.origin}/?s=vote${pollId ? `&poll=${pollId}` : ""}${activeCrewId ? `&crew=${activeCrewId}` : ""}`;
   const doShare = async () => {
     const title = sharePoll?.title || "우리 크루 투표";
     const text = `우리 크루 다음 세션 투표: ${title} — 참여해줘!`;
-    const url = window.location.origin;
+    const url = pollShareUrl(sharePoll?.id);
     const w = window as Any;
     if (w.Kakao?.isInitialized?.() && w.Kakao.Share) {
       try { w.Kakao.Share.sendDefault({ objectType: "feed", content: { title, description: text, imageUrl: url + "/brand/climbcrew-icon-512.png", link: { mobileWebUrl: url, webUrl: url } }, buttons: [{ title: "투표 참여하기", link: { mobileWebUrl: url, webUrl: url } }] }); return; } catch { /* fall through */ }
@@ -411,7 +535,7 @@ export default function ClimbCrewApp() {
     if ((navigator as Any).share) { try { await (navigator as Any).share({ title, text, url }); return; } catch { return; } }
     try { await navigator.clipboard.writeText(`${text} ${url}`); showToast("링크를 복사했어요"); } catch { showToast("공유를 지원하지 않는 브라우저예요"); }
   };
-  const copyPollLink = async () => { try { await navigator.clipboard.writeText(window.location.origin); showToast("링크를 복사했어요"); } catch { showToast("복사에 실패했어요"); } };
+  const copyPollLink = async () => { try { await navigator.clipboard.writeText(pollShareUrl(sharePoll?.id)); showToast("투표 링크를 복사했어요"); } catch { showToast("복사에 실패했어요"); } };
   const addDateCandidate = () => { if (!newDate) { showToast("날짜를 골라주세요"); return; } setPollDates((d) => [...d, { date: newDate, label: newLabel }]); setNewDate(""); };
   const removeDateCandidate = (i: number) => setPollDates((d) => d.filter((_, idx) => idx !== i));
   const toggleGymCandidate = (id: string) => setPollGymIds((g) => (g.includes(id) ? g.filter((x) => x !== id) : [...g, id]));
@@ -457,7 +581,7 @@ export default function ClimbCrewApp() {
   // 투표 암장 후보: 홈 암장 먼저(오래 안 간 곳 최우선), 나머지는 검색으로 추가
   const homeGymCandidates = gyms.filter((g) => g.isHome).sort((a, b) => { if (a.due !== b.due) return a.due ? -1 : 1; const aw = a.weeks == null ? Infinity : a.weeks; const bw = b.weeks == null ? Infinity : b.weeks; return bw - aw; });
   const otherGyms = gyms.filter((g) => !g.isHome);
-  const exploreGyms = exploreQ.trim() ? gyms.filter((g) => (g.name + " " + g.loc).toLowerCase().includes(exploreQ.trim().toLowerCase())) : gyms;
+  const exploreGyms = (exploreQ.trim() ? gyms.filter((g) => (g.name + " " + g.loc).toLowerCase().includes(exploreQ.trim().toLowerCase())) : gyms).filter((g) => !brandFilter || brandOf(g.name) === brandFilter);
   // 지도 마커용(안정된 identity — crewGyms/검색어 바뀔 때만 재생성해서 188개 재구성 방지)
   const mapGyms = useMemo(() => {
     const q = exploreQ.trim().toLowerCase();
@@ -475,9 +599,12 @@ export default function ClimbCrewApp() {
   const gymById = (id: string | null) => gyms.find((g) => g.id === id) || null;
   const toGo = gyms.filter((g) => g.isHome && g.due).sort((a, b) => { const aw = a.weeks == null ? Infinity : a.weeks; const bw = b.weeks == null ? Infinity : b.weeks; return bw - aw; });
 
-  const openVote = openPoll ? { id: openPoll.id, title: openPoll.title, deadline: fmtDeadline(openPoll.deadline), responded: openPoll.responderCount ?? 0, total: memberCount } : null;
+  const deadlinePassed = (p: Any) => !!(p?.deadline && new Date(p.deadline).getTime() < Date.now());
+  const openVote = openPoll ? { id: openPoll.id, title: openPoll.title, deadline: fmtDeadline(openPoll.deadline), expired: deadlinePassed(openPoll), responded: openPoll.responderCount ?? 0, total: memberCount } : null;
   const respondedCount = (openVote?.responded ?? 0);
+  const myRole = crewDetail?.members?.find((m: Any) => m.userId === me?.id)?.role ?? null;
   const canClose = !!(me && openPoll && openPoll.creatorId === me.id); // #1 투표 만든 사람만 마감
+  const canDeletePoll = !!(me && openPoll && (openPoll.creatorId === me.id || myRole === "LEADER")); // 방치된 투표는 크루장도 정리 가능
   // 다음 세션 = 실제 확정된 Visit(가장 가까운 미래). 취소하면 사라지도록 Visit 기준으로 계산.
   const _todayMid0 = new Date(); _todayMid0.setHours(0, 0, 0, 0);
   const nextVisit = [...visits].filter((v) => new Date(v.date).getTime() >= _todayMid0.getTime()).sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())[0] || null;
@@ -542,6 +669,11 @@ export default function ClimbCrewApp() {
           {canEdit && <button onClick={() => { if (typeof window !== "undefined" && window.confirm("이 일정을 취소할까요?")) cancelVisit(v); }} style={{ height: 40, padding: "0 14px", border: "2px solid #C23A24", borderRadius: WOBS[2], background: "#FFFEFA", color: "#C23A24", fontSize: 14, fontWeight: 700, cursor: "pointer" }}>취소</button>}
         </div>
       )}
+      {!future && canEdit && (
+        <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 10 }}>
+          <button onClick={() => { if (typeof window !== "undefined" && window.confirm("이 방문 기록을 삭제할까요? 되돌릴 수 없어요.")) cancelVisit(v); }} style={{ height: 36, padding: "0 12px", border: "none", background: "transparent", color: "#B4432E", fontSize: 13, fontWeight: 700, cursor: "pointer", textDecoration: "underline" }}>기록 삭제</button>
+        </div>
+      )}
     </div>
     );
   };
@@ -574,6 +706,16 @@ export default function ClimbCrewApp() {
   const votersOf = (o: Any) => (o.votes ?? []).map((v: Any) => ({ id: v.user?.id, name: v.user?.nickname || "?", img: v.user?.profileImg || null }));
   const gymOpts = (votePoll?.gymOptions ?? []).map((o: Any) => { const g = gyms.find((x) => x.id === o.gymId); return { id: o.id, name: o.gym?.name || "", meta: g ? visitLabel(g) : "", count: o._count?.votes ?? o.votes?.length ?? 0, voters: votersOf(o) }; }).sort((a: Any, b: Any) => b.count - a.count);
   const hasGymOpts = gymOpts.length > 0;
+
+  // 마감 프리뷰 — 서버와 같은 규칙으로 뭘로 확정되는지 미리 보여줌.
+  // 날짜 표 = "안 되는 사람" 이므로 최소 득표(가장 적게 불가한 날), 동점이면 이른 날짜. 암장은 최다 선호.
+  const voteCnt = (o: Any) => o._count?.votes ?? o.votes?.length ?? 0;
+  const closeWinDate = (() => {
+    const ds = votePoll?.dateOptions ?? [];
+    if (!ds.length) return null;
+    return [...ds].sort((a: Any, b: Any) => voteCnt(a) - voteCnt(b) || new Date(a.date).getTime() - new Date(b.date).getTime())[0];
+  })();
+  const closeWinGym = gymOpts[0] ?? null;
 
   // 응답 캘린더: 날짜후보(=하루 단위 옵션)를 달력에 뿌림. 날짜키(YYYY-MM-DD)로 매칭.
   const dayKeyOf = (iso: string) => { const d = new Date(iso); return ymd(d.getFullYear(), d.getMonth(), d.getDate()); };
@@ -613,7 +755,7 @@ export default function ClimbCrewApp() {
                   ? `repeating-linear-gradient(52deg, rgba(${CRAYON.red},${0.32 + heat * 0.5}) 0 2.5px, rgba(${CRAYON.red},${0.1 + heat * 0.22}) 2.5px 5px, transparent 5px ${7.5 - heat * 1.5}px)`
                   : "#FFFEFA";
                 return (
-                  <div key={d} onClick={() => { setVoteDates((v) => ({ ...v, [opt.id]: !v[opt.id] })); setFocusDay(k); }} style={{ position: "relative", height: 48, borderRadius: 10, cursor: "pointer", background: bg, border: "2px dashed rgba(58,54,51,0.28)", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center" }}>
+                  <div key={d} onClick={() => { setFocusDay(k); if (!voteSubmitted) setVoteDates((v) => ({ ...v, [opt.id]: !v[opt.id] })); }} style={{ position: "relative", height: 48, borderRadius: 10, cursor: "pointer", background: bg, border: "2px dashed rgba(58,54,51,0.28)", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center" }}>
                     <div style={{ fontSize: 16, fontWeight: 700, color: "#3A3633", lineHeight: 1 }}>{d}</div>
                     {opt.count > 0 && <div style={{ fontSize: 11, fontWeight: 700, color: "#B4432E", marginTop: 1, lineHeight: 1 }}>{opt.count}명 ✕</div>}
                     {mine && <svg viewBox="0 0 40 44" style={{ position: "absolute", inset: -4, width: "calc(100% + 8px)", height: "calc(100% + 8px)", pointerEvents: "none" }}><path d="M9 9 C18 17 24 27 32 37 M31 9 C22 18 16 27 8 37" fill="none" stroke="#C23A24" strokeWidth="3" strokeLinecap="round" /></svg>}
@@ -647,11 +789,11 @@ export default function ClimbCrewApp() {
   let bottomBar: ReactNode = null;
   if (is("createPoll")) bottomBar = <button onClick={createPoll} style={{ width: "100%", height: 52, fontSize: 18, fontWeight: 700, ...crayonBtn(CRAYON.red, 0) }}>투표 만들기</button>;
   else if (is("record")) bottomBar = <button onClick={saveRecord} style={{ width: "100%", height: 52, fontSize: 18, fontWeight: 700, ...crayonBtn(CRAYON.red, 0) }}>완등 기록 저장</button>;
-  else if (is("probDetail") && pd) bottomBar = <button onClick={() => tab("record")} style={{ width: "100%", height: 52, fontSize: 18, fontWeight: 700, ...crayonBtn(CRAYON.red, 0) }}>내 기록 남기기</button>;
-  else if (is("gymDetail") && sg) bottomBar = (<div style={{ display: "flex", gap: 10 }}><button onClick={recordVisit} style={{ flex: 1, height: 50, border: `2px solid ${INK}`, borderRadius: WOBS[1], background: "#FFFEFA", fontSize: 17, fontWeight: 700, cursor: "pointer" }}>방문 기록</button><button onClick={openReviewSheet} style={{ flex: 1.5, height: 50, fontSize: 17, fontWeight: 700, ...crayonBtn(CRAYON.red, 2) }}>리뷰 쓰기</button></div>);
+  else if (is("probDetail") && pd) bottomBar = <button onClick={() => showToast("완등 기록은 준비 중이에요 · 조금만 기다려주세요")} style={{ width: "100%", height: 52, fontSize: 18, fontWeight: 700, ...crayonBtn(CRAYON.red, 0), opacity: 0.55 }}>내 기록 남기기 <span style={{ fontSize: 13, fontWeight: 700 }}>(준비 중)</span></button>;
+  else if (is("gymDetail") && sg) bottomBar = (<div style={{ display: "flex", gap: 10 }}><button onClick={openVisitSheet} style={{ flex: 1, height: 50, border: `2px solid ${INK}`, borderRadius: WOBS[1], background: "#FFFEFA", fontSize: 17, fontWeight: 700, cursor: "pointer" }}>방문 기록</button><button onClick={openReviewSheet} style={{ flex: 1.5, height: 50, fontSize: 17, fontWeight: 700, ...crayonBtn(CRAYON.red, 2) }}>리뷰 쓰기</button></div>);
   else if (is("vote") && openVote) bottomBar = voteSubmitted ? (<div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}><div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 15, fontWeight: 700, color: "#3E7D2E" }}><svg width="20" height="20" viewBox="0 0 20 20"><circle cx="10" cy="10" r="9" fill="#6BBF59" /><path d="M5.5 10.2 8.5 13 14.5 6.5" stroke="#fff" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round" /></svg>응답을 제출했어요</div><button onClick={() => setVoteSubmitted(false)} style={{ height: 42, padding: "0 16px", border: `2px solid ${INK}`, borderRadius: WOBS[2], background: "#FFFEFA", fontSize: 16, fontWeight: 700, cursor: "pointer" }}>수정하기</button></div>) : (<button onClick={submitVote} style={{ width: "100%", height: 52, fontSize: 18, fontWeight: 700, ...crayonBtn(CRAYON.red, 0) }}>응답 제출</button>);
 
-  const loginGo = () => { if (invitePending) { go("start"); return; } if (crews.length) tab("home"); else go("start"); };
+  const loginGo = () => enterApp(crews);
 
   return (
     <div className="app-shell">
@@ -672,14 +814,14 @@ export default function ClimbCrewApp() {
 
           {is("start") && (
             <div style={{ minHeight: "100%", display: "flex", flexDirection: "column", padding: "96px 24px 32px", animation: "ccfade .3s ease" }}>
-              <div style={{ fontSize: 26, fontWeight: 800, letterSpacing: "-0.02em" }}>크루 시작하기</div>
-              <div style={{ fontSize: 15, color: "#514C44", marginTop: 8, lineHeight: 1.5 }}>아직 소속된 크루가 없어요.<br />새로 만들거나 초대 코드로 참여해보세요.</div>
+              <div style={{ fontSize: 26, fontWeight: 800, letterSpacing: "-0.02em" }}>{crews.length ? "크루 추가하기" : "크루 시작하기"}</div>
+              <div style={{ fontSize: 15, color: "#514C44", marginTop: 8, lineHeight: 1.5 }}>{crews.length ? <>새 크루를 만들거나<br />초대 코드로 다른 크루에 참여할 수 있어요.</> : <>아직 소속된 크루가 없어요.<br />새로 만들거나 초대 코드로 참여해보세요.</>}</div>
               <div style={{ flex: 1 }} />
               <button onClick={() => go("create")} style={{ width: "100%", height: 52, fontSize: 18, fontWeight: 700, ...crayonBtn(CRAYON.red, 0) }}>새 크루 만들기</button>
               <div style={{ display: "flex", alignItems: "center", gap: 12, margin: "22px 0" }}><div style={{ flex: 1, height: 1, background: "#C9C2B2" }} /><div style={{ fontSize: 13, color: "#514C44" }}>또는</div><div style={{ flex: 1, height: 1, background: "#C9C2B2" }} /></div>
               <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 8 }}>초대 코드로 참여</div>
               <div style={{ display: "flex", gap: 8 }}>
-                <input value={joinCode} onChange={(e) => setJoinCode(e.target.value)} placeholder="예: CLIMB-8H2K" style={{ flex: 1, height: 50, border: "2px solid #3A3633", borderRadius: 10, padding: "0 14px", fontSize: 15, background: "#fff", outline: "none" }} />
+                <input value={joinCode} onChange={(e) => setJoinCode(e.target.value.toUpperCase())} placeholder="예: CREW-8H2K" autoCapitalize="characters" style={{ flex: 1, height: 50, border: "2px solid #3A3633", borderRadius: 10, padding: "0 14px", fontSize: 15, background: "#fff", outline: "none", textTransform: "uppercase" }} />
                 <button onClick={joinByCode} style={{ height: 50, padding: "0 20px", fontSize: 17, fontWeight: 700, whiteSpace: "nowrap", ...crayonBtn("58,54,51", 2) }}>참여하기</button>
               </div>
             </div>
@@ -714,7 +856,7 @@ export default function ClimbCrewApp() {
                   {createGymQ.trim() && allGymsList.filter((g: Any) => (g.name + " " + (g.address || "")).toLowerCase().includes(createGymQ.trim().toLowerCase())).length === 0 && <div style={{ padding: 14, color: "#514C44", fontSize: 14, textAlign: "center" }}>검색 결과가 없어요</div>}
                 </div>
               </div>
-              <div style={{ padding: "28px 16px 0" }}><button onClick={createCrew} style={{ width: "100%", height: 52, fontSize: 18, fontWeight: 700, ...crayonBtn(CRAYON.red, 0) }}>크루 만들기</button></div>
+              <div style={{ padding: "28px 16px 0" }}><button onClick={createCrew} disabled={creating} style={{ width: "100%", height: 52, fontSize: 18, fontWeight: 700, ...crayonBtn(CRAYON.red, 0), opacity: creating ? 0.6 : 1 }}>{creating ? "만드는 중…" : "크루 만들기"}</button></div>
             </div>
           )}
 
@@ -767,7 +909,7 @@ export default function ClimbCrewApp() {
                 </div>
                 <div style={{ display: "flex", alignItems: "center", gap: 2 }}>
                   <div onClick={openCrewManage} aria-label="크루 관리" style={{ width: 40, height: 40, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}><svg width="22" height="22" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="3.2" stroke="#3A3633" strokeWidth="1.8" /><path d="M12 3v2.2M12 18.8V21M3 12h2.2M18.8 12H21M5.8 5.8l1.6 1.6M16.6 16.6 18.2 18.2M18.2 5.8 16.6 7.4M7.4 16.6 5.8 18.2" stroke="#3A3633" strokeWidth="1.8" strokeLinecap="round" /></svg></div>
-                  <div style={{ position: "relative", width: 40, height: 40, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}><svg width="22" height="22" viewBox="0 0 24 24" fill="none"><path d="M6 9a6 6 0 1 1 12 0c0 5 2 6 2 6H4s2-1 2-6Z" stroke="#3A3633" strokeWidth="1.8" strokeLinejoin="round" /><path d="M10 20a2 2 0 0 0 4 0" stroke="#3A3633" strokeWidth="1.8" strokeLinecap="round" /></svg><div style={{ position: "absolute", top: 8, right: 9, width: 8, height: 8, borderRadius: 999, background: "#E24D3A", border: "1.5px solid #FFFDF6" }} /></div>
+                  <button aria-label="알림 (준비 중)" onClick={() => showToast("알림은 준비 중이에요")} style={{ position: "relative", width: 40, height: 40, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", border: "none", background: "transparent", opacity: 0.55 }}><svg width="22" height="22" viewBox="0 0 24 24" fill="none"><path d="M6 9a6 6 0 1 1 12 0c0 5 2 6 2 6H4s2-1 2-6Z" stroke="#3A3633" strokeWidth="1.8" strokeLinejoin="round" /><path d="M10 20a2 2 0 0 0 4 0" stroke="#3A3633" strokeWidth="1.8" strokeLinecap="round" /></svg></button>
                 </div>
               </div>
 
@@ -798,13 +940,19 @@ export default function ClimbCrewApp() {
                   <div style={sectionLabel}>진행 중인 투표</div>
                   <div onClick={openCreatePoll} style={{ fontSize: 12, fontWeight: 700, color: "#E24D3A", cursor: "pointer" }}>+ 새 투표</div>
                 </div>
-                {openVote ? (
-                  <div style={{ padding: 18, ...cardStyle }}>
-                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}><div style={{ fontSize: 17, fontWeight: 700 }}>{openVote.title}</div><div style={{ fontSize: 12, fontWeight: 700, color: "#B4432E", background: "#FBF0DA", padding: "3px 8px", borderRadius: 999 }}>{openVote.deadline}</div></div>
-                    <div style={{ fontSize: 13, color: "#514C44", marginTop: 8 }}>{respondedCount}/{openVote.total}명 응답 완료</div>
-                    <div style={{ height: 6, borderRadius: 999, background: "#F3EEDF", marginTop: 8, overflow: "hidden" }}><div style={{ height: "100%", width: (openVote.total ? respondedCount / openVote.total : 0) * 100 + "%", background: "#E24D3A", borderRadius: 999 }} /></div>
-                    <button onClick={() => go("vote")} style={{ width: "100%", height: 46, marginTop: 14, fontSize: 17, fontWeight: 700, ...crayonBtn(CRAYON.red, 3) }}>참여하기</button>
+                {openPolls.length > 0 ? (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                    {openPolls.map((p) => { const exp = deadlinePassed(p); const responded = p.responderCount ?? 0; return (
+                      <div key={p.id} style={{ padding: 18, ...cardStyle }}>
+                        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}><div style={{ fontSize: 17, fontWeight: 700, minWidth: 0 }}>{p.title}</div><div style={{ fontSize: 12, fontWeight: 700, flexShrink: 0, color: exp ? "#fff" : "#B4432E", background: exp ? "#B4432E" : "#FBF0DA", padding: "3px 8px", borderRadius: 999 }}>{exp ? "기한 지남" : fmtDeadline(p.deadline)}</div></div>
+                        <div style={{ fontSize: 13, color: "#514C44", marginTop: 8 }}>{responded}/{memberCount}명 응답 완료{exp ? " · 마감하고 확정해주세요" : ""}</div>
+                        <div style={{ height: 6, borderRadius: 999, background: "#F3EEDF", marginTop: 8, overflow: "hidden" }}><div style={{ height: "100%", width: (memberCount ? responded / memberCount : 0) * 100 + "%", background: "#E24D3A", borderRadius: 999 }} /></div>
+                        <button onClick={() => goVote(p.id)} style={{ width: "100%", height: 46, marginTop: 14, fontSize: 17, fontWeight: 700, ...crayonBtn(CRAYON.red, 3) }}>참여하기</button>
+                      </div>
+                    ); })}
                   </div>
+                ) : !crewLoaded ? (
+                  <div style={{ padding: 16, ...cardStyle, color: "#A8A297", fontSize: 14 }}>불러오는 중이에요…</div>
                 ) : (
                   <div style={{ padding: 16, ...cardStyle, color: "#514C44", fontSize: 14 }}>진행 중인 투표가 없어요. <span onClick={openCreatePoll} style={{ color: "#E24D3A", fontWeight: 700, cursor: "pointer" }}>새로 만들기</span></div>
                 )}
@@ -814,7 +962,13 @@ export default function ClimbCrewApp() {
                 <div style={sectionLabel}>가야 할 암장</div>
                 <div style={{ fontSize: 12, color: "#514C44", margin: "2px 0 10px" }}>간 지 오래됐거나 안 가본 홈 암장</div>
                 <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                  {toGo.length === 0 && <div style={{ padding: 14, ...cardStyle, color: "#514C44", fontSize: 13 }}>다 다녀왔어요! 🎉</div>}
+                  {toGo.length === 0 && (!crewLoaded ? (
+                    <div style={{ padding: 14, ...cardStyle, color: "#A8A297", fontSize: 13 }}>불러오는 중이에요…</div>
+                  ) : !gyms.some((g) => g.isHome) ? (
+                    <div style={{ padding: 14, ...cardStyle, fontSize: 13, color: "#514C44" }}>홈 암장을 설정하면 갈 때가 된 곳을 알려드려요. <span onClick={openCrewManage} style={{ color: "#E24D3A", fontWeight: 700, cursor: "pointer" }}>설정하기</span></div>
+                  ) : (
+                    <div style={{ padding: 14, ...cardStyle, color: "#514C44", fontSize: 13 }}>다 다녀왔어요! 🎉</div>
+                  ))}
                   {toGo.map((gg) => (
                     <div key={gg.id} onClick={() => openGym(gg.id)} style={{ display: "flex", alignItems: "center", gap: 12, padding: 14, ...cardStyle, cursor: "pointer" }}>
                       <div style={avatarStyle(gg.color)}>{gg.name[0]}</div>
@@ -842,6 +996,11 @@ export default function ClimbCrewApp() {
                   <input value={exploreQ} onChange={(e) => { setExploreQ(e.target.value); setMapSel(null); setBrandFilter(null); }} placeholder="암장 · 지역 검색" style={{ flex: 1, border: "none", background: "transparent", outline: "none", fontSize: 15, minWidth: 0 }} />
                   {exploreQ && <div onClick={() => { setExploreQ(""); setMapSel(null); }} style={{ cursor: "pointer", padding: 4 }}><svg width="14" height="14" viewBox="0 0 14 14"><path d="M2 2l10 10M12 2 2 12" stroke="#514C44" strokeWidth="2" strokeLinecap="round" /></svg></div>}
                 </div>
+                <button aria-label={exploreView === "map" ? "목록으로 보기" : "지도로 보기"} onClick={() => setExploreView((v) => (v === "map" ? "list" : "map"))} style={{ width: 44, height: 44, flexShrink: 0, border: `2px solid ${INK}`, borderRadius: WOBS[3], background: "#FFFEFA", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                  {exploreView === "map"
+                    ? <svg width="19" height="19" viewBox="0 0 24 24" fill="none"><path d="M4 6h16M4 12h16M4 18h16" stroke={INK} strokeWidth="2" strokeLinecap="round" /></svg>
+                    : <svg width="19" height="19" viewBox="0 0 24 24" fill="none"><path d="M9 4 4 6v14l5-2 6 2 5-2V4l-5 2-6-2ZM9 4v14M15 6v14" stroke={INK} strokeWidth="1.8" strokeLinejoin="round" /></svg>}
+                </button>
               </div>
               {topBrands.length > 0 && (
                 <div style={{ display: "flex", gap: 8, padding: "0 14px 10px", overflowX: "auto", flexShrink: 0 }}>
@@ -853,6 +1012,22 @@ export default function ClimbCrewApp() {
                   ); })}
                 </div>
               )}
+              {exploreView === "list" ? (
+                <div style={{ flex: 1, overflowY: "auto", minHeight: 0, padding: "2px 16px 16px", display: "flex", flexDirection: "column", gap: 10 }}>
+                  {exploreGyms.length === 0 && <div style={{ padding: 14, ...cardStyle, color: "#514C44", fontSize: 13 }}>{crewLoaded ? "조건에 맞는 암장이 없어요." : "불러오는 중이에요…"}</div>}
+                  {exploreGyms.map((g) => (
+                    <div key={g.id} onClick={() => openGym(g.id)} style={{ display: "flex", alignItems: "center", gap: 12, padding: 14, ...cardStyle, cursor: "pointer", flexShrink: 0 }}>
+                      <div style={avatarStyle(g.color, 40)}>{g.name[0]}</div>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 15, fontWeight: 700 }}>{g.name}</div>
+                        <div style={{ fontSize: 12, color: "#514C44", marginTop: 2 }}>{g.loc}{g.rating ? ` · ★ ${g.rating}` : ""}</div>
+                        <div style={{ display: "inline-flex", alignItems: "center", marginTop: 6, padding: "2px 8px", borderRadius: 999, fontSize: 11, fontWeight: 700, background: g.due ? "#FBEFD9" : "#F3EEDF", color: g.due ? "#B5730A" : "#514C44" }}>{visitLabel(g)}</div>
+                      </div>
+                      <ChevR />
+                    </div>
+                  ))}
+                </div>
+              ) : (
               <div style={{ flex: 1, position: "relative", margin: "0 12px 12px", ...wob(0), overflow: "hidden", minHeight: 0 }}>
                 <GymMap gyms={mapGyms} selectedId={mapSel} onSelect={(id) => setMapSel(id || null)} />
                 {exploreQ.trim() && mapGyms.length === 0 && (
@@ -877,6 +1052,7 @@ export default function ClimbCrewApp() {
                   </div>
                 )}
               </div>
+              )}
             </div>
           )}
 
@@ -885,9 +1061,26 @@ export default function ClimbCrewApp() {
               <div style={{ animation: "ccfade .3s ease", paddingBottom: 24 }}>
                 <div style={{ padding: "56px 16px 8px" }}>
                   <div onClick={() => setSwitcherOpen(true)} style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "5px 12px 5px 5px", background: hatch(hexRgb(ac ? crewColor(ac.id) : "#E24D3A")), border: `2px solid ${INK}`, borderRadius: WOBS[0], cursor: "pointer", marginBottom: 14, transform: "rotate(-0.8deg)" }}><div style={{ width: 24, height: 24, borderRadius: "50% 46% 52% 48% / 48% 52% 46% 50%", flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 700, fontSize: 13, background: "#FFFDF6", color: INK }}>{ac?.name?.[0] ?? "?"}</div><span style={{ fontSize: 15, fontWeight: 700, color: "#fff" }}>{ac?.name ?? ""}</span><svg width="12" height="12" viewBox="0 0 12 12" style={{ marginLeft: -1 }}><path d="M2 4.5 6 8.5 10 4.5" stroke="#fff" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round" /></svg></div>
+                  {openPolls.length > 1 && (
+                    <div style={{ display: "flex", gap: 8, overflowX: "auto", marginBottom: 12, paddingBottom: 2 }}>
+                      {openPolls.map((p) => { const on = p.id === openPoll?.id; return (
+                        <button key={p.id} onClick={() => { setSelPollId(p.id); replaceNav("vote", { poll: p.id }); }} style={{ flexShrink: 0, padding: "6px 14px", fontSize: 14, fontWeight: 700, cursor: "pointer", border: on ? `2px solid ${INK}` : "2px dashed rgba(58,54,51,0.3)", borderRadius: WOBS[2], background: on ? HILITE : "#FFFEFA", color: on ? INK : "#514C44" }}>{p.title}</button>
+                      ); })}
+                    </div>
+                  )}
                   <div style={H1}>{openVote?.title ?? "진행 중인 투표 없음"}</div>
                   {openVote && <div style={{ fontSize: 13, color: "#514C44", marginTop: 6 }}>{openVote.deadline} · {respondedCount}/{openVote.total}명 응답</div>}
-                  {canClose && openVote && <button onClick={() => setCloseSheetOpen(true)} style={{ marginTop: 14, display: "inline-flex", alignItems: "center", gap: 6, height: 42, padding: "0 16px", border: `2px solid ${INK}`, borderRadius: WOBS[3], background: HILITE, fontSize: 16, fontWeight: 700, color: INK, cursor: "pointer", transform: "rotate(-0.5deg)" }}>투표 마감하고 확정 →</button>}
+                  {openVote?.expired && (
+                    <div style={{ marginTop: 12, padding: "10px 14px", borderRadius: WOBS[2], border: `2px solid ${INK}`, background: "#FBF0DA", fontSize: 14, fontWeight: 700, color: "#B4432E" }}>
+                      투표 기한이 지났어요. {canClose ? "아래에서 마감하고 확정해주세요." : "투표를 만든 사람이 마감할 수 있어요."}
+                    </div>
+                  )}
+                  {openVote && (canClose || canDeletePoll) && (
+                    <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 14 }}>
+                      {canClose && <button onClick={() => setCloseSheetOpen(true)} style={{ display: "inline-flex", alignItems: "center", gap: 6, height: 42, padding: "0 16px", border: `2px solid ${INK}`, borderRadius: WOBS[3], background: HILITE, fontSize: 16, fontWeight: 700, color: INK, cursor: "pointer", transform: "rotate(-0.5deg)" }}>투표 마감하고 확정 →</button>}
+                      {canDeletePoll && <button onClick={() => setDeletePollSheetOpen(true)} style={{ height: 42, padding: "0 12px", border: "none", background: "transparent", fontSize: 14, fontWeight: 700, color: "#B4432E", cursor: "pointer", textDecoration: "underline" }}>삭제</button>}
+                    </div>
+                  )}
                 </div>
                 {!openVote && <div style={{ padding: "0 16px", color: "#514C44", fontSize: 14 }}>이 크루엔 진행 중인 투표가 없어요.</div>}
                 {openVote && (<>
@@ -901,8 +1094,8 @@ export default function ClimbCrewApp() {
                   )}
                   {(!hasGymOpts || voteTab === "date") && (
                     <div style={{ padding: "18px 16px 0" }}>
-                      <div style={{ fontSize: 17, fontWeight: 700, marginBottom: 2 }}>안 되는 날에 X 쳐주세요</div>
-                      <div style={{ fontSize: 14, color: "#514C44", marginBottom: 16 }}>못 가는 날만 표시 · 다 되면 안 골라도 돼요 · 누르면 누가 안 되는지 나와요</div>
+                      <div style={{ fontSize: 17, fontWeight: 700, marginBottom: 2 }}>{voteSubmitted ? "제출 완료 · 날짜를 누르면 누가 안 되는지 보여요" : "안 되는 날에 X 쳐주세요"}</div>
+                      <div style={{ fontSize: 14, color: "#514C44", marginBottom: 16 }}>{voteSubmitted ? "선택을 바꾸려면 아래 '수정하기'를 눌러주세요" : "못 가는 날만 표시 · 다 되면 안 골라도 돼요 · 누르면 누가 안 되는지 나와요"}</div>
                       {respMonths.length === 0 ? <div style={{ color: "#514C44", fontSize: 15 }}>날짜 후보가 없어요.</div> : respondCalendar()}
                       {respMonths.length > 0 && (
                         <div style={{ display: "flex", alignItems: "center", gap: 16, marginTop: 12, fontSize: 13, fontWeight: 700, color: "#443F38", flexWrap: "wrap" }}>
@@ -924,7 +1117,7 @@ export default function ClimbCrewApp() {
                       <div style={{ fontSize: 12, color: "#514C44", marginBottom: 14 }}>다른 사람이 많이 고른 곳이 위에 · 여러 곳 가능</div>
                       <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
                         {gymOpts.map((o: Any) => { const sel = !!voteGyms[o.id]; return (
-                          <div key={o.id} onClick={() => setVoteGyms((v) => ({ ...v, [o.id]: !v[o.id] }))} style={{ ...rowStyle(sel), alignItems: "flex-start" }}><div style={{ ...boxStyle(sel), marginTop: 1 }}>{sel ? "✓" : ""}</div><div style={{ flex: 1, minWidth: 0 }}><div style={{ fontSize: 15, fontWeight: 600 }}>{o.name}</div><div style={{ fontSize: 12, color: "#514C44", marginTop: 2 }}>{o.meta}</div>{voterRow(o.voters)}</div><div style={{ fontSize: 13, fontWeight: 700, color: "#514C44" }}>{o.count}표</div></div>
+                          <div key={o.id} onClick={() => { if (voteSubmitted) { showToast("아래 '수정하기'를 누르면 바꿀 수 있어요"); return; } setVoteGyms((v) => ({ ...v, [o.id]: !v[o.id] })); }} style={{ ...rowStyle(sel), alignItems: "flex-start" }}><div style={{ ...boxStyle(sel), marginTop: 1 }}>{sel ? "✓" : ""}</div><div style={{ flex: 1, minWidth: 0 }}><div style={{ fontSize: 15, fontWeight: 600 }}>{o.name}</div><div style={{ fontSize: 12, color: "#514C44", marginTop: 2 }}>{o.meta}</div>{voterRow(o.voters)}</div><div style={{ fontSize: 13, fontWeight: 700, color: "#514C44" }}>{o.count}표</div></div>
                         ); })}
                       </div>
                     </div>
@@ -985,7 +1178,7 @@ export default function ClimbCrewApp() {
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(7,1fr)", rowGap: 6, fontSize: 14 }}>{calCells.map((c) => <div key={c.key} style={c.style}>{c.day}</div>)}</div>
                 <div style={{ display: "flex", gap: 14, marginTop: 14, paddingTop: 14, borderTop: "2px dashed rgba(58,54,51,0.25)", fontSize: 13, fontWeight: 700, color: "#443F38", flexWrap: "wrap" }}><div style={{ display: "flex", alignItems: "center", gap: 6 }}><span style={{ width: 13, height: 13, borderRadius: "56% 44% 52% 48% / 48% 52% 44% 56%", background: hatch(CRAYON.green), border: `1.5px solid ${INK}`, display: "inline-block" }} />내 일정</div><div style={{ display: "flex", alignItems: "center", gap: 6 }}><span style={{ width: 13, height: 13, borderRadius: "56% 44% 52% 48% / 48% 52% 44% 56%", border: "2px dashed #2E6B22", display: "inline-block" }} />크루 일정</div><div style={{ display: "flex", alignItems: "center", gap: 6 }}><span style={{ width: 13, height: 13, borderRadius: "52% 48% 46% 54%", border: "2px solid #E24D3A", display: "inline-block" }} />오늘</div></div>
               </div>
-              {visits.length === 0 && <div style={{ padding: "22px 16px 0" }}><div style={{ padding: 14, ...cardStyle, color: "#514C44", fontSize: 13 }}>클라이밍 일정이 아직 없어요. 투표로 잡아보세요!</div></div>}
+              {visits.length === 0 && <div style={{ padding: "22px 16px 0" }}><div style={{ padding: 14, ...cardStyle, color: !crewLoaded ? "#A8A297" : "#514C44", fontSize: 13 }}>{!crewLoaded ? "불러오는 중이에요…" : "클라이밍 일정이 아직 없어요. 투표로 잡아보세요!"}</div></div>}
               {futureVisits.length > 0 && (
                 <div style={{ padding: "22px 16px 0" }}>
                   <div style={{ ...sectionLabel, marginBottom: 10 }}>다가오는 일정</div>
@@ -1005,7 +1198,10 @@ export default function ClimbCrewApp() {
             <div style={{ animation: "ccfade .3s ease", paddingBottom: 96 }}>
               <div style={{ padding: "56px 16px 8px" }}><div style={H1}>프로필</div></div>
               <div style={{ padding: "14px 16px 0" }}><div style={{ display: "flex", alignItems: "center", gap: 14 }}>{me?.profileImg ? <img src={me.profileImg} alt="" style={{ width: 66, height: 66, borderRadius: "60% 45% 55% 50% / 50% 60% 45% 58%", objectFit: "cover", flexShrink: 0, border: `2.5px solid ${INK}`, transform: "rotate(-2deg)" }} /> : <div style={{ width: 66, height: 66, borderRadius: "60% 45% 55% 50% / 50% 60% 45% 58%", background: hatch(CRAYON.red), border: `2.5px solid ${INK}`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 28, fontWeight: 700, color: "#fff", flexShrink: 0, transform: "rotate(-2deg)" }}>{(me?.nickname || "?")[0]}</div>}<div><div style={{ fontSize: 20, fontWeight: 800 }}>{me?.nickname ?? "…"}</div><div onClick={() => crews.length > 1 && setSwitcherOpen(true)} style={{ fontSize: 13, color: "#514C44", marginTop: 2, cursor: crews.length > 1 ? "pointer" : "default" }}>{crews.length === 0 ? "소속 크루 없음" : crews.length === 1 ? ac?.name : `${crews.length}개 크루 · ${ac?.name ?? ""} ▾`}</div><div style={{ display: "inline-flex", alignItems: "center", gap: 6, marginTop: 8, padding: "5px 11px", borderRadius: 999, background: "#FBF0DA", fontSize: 12, fontWeight: 800, color: "#B4432E" }}><span style={{ width: 10, height: 10, borderRadius: 999, background: "#2F72E0", display: "inline-block" }} />{thetaChip}</div></div></div></div>
-              <div style={{ padding: "18px 16px 0" }}><div style={{ display: "flex", ...cardStyle, overflow: "hidden" }}>{[[String(gyms.filter((g) => g.ever).length), "방문 암장"], [String(gymReviews.length || 0), "작성 리뷰"], [String(visits.length), "방문 기록"]].map(([n, l], i) => (<div key={l} style={{ flex: 1, textAlign: "center", padding: "16px 0", borderLeft: i ? "2px dashed rgba(58,54,51,0.25)" : "none" }}><div style={{ fontSize: 20, fontWeight: 800 }}>{n}</div><div style={{ fontSize: 12, color: "#514C44", marginTop: 2 }}>{l}</div></div>))}</div></div>
+              <div style={{ padding: "18px 16px 0" }}>
+                <div style={{ display: "flex", ...cardStyle, overflow: "hidden" }}>{[[String(visits.filter((v: Any) => v.mine).length), "내 일정"], [String(gyms.filter((g) => g.ever).length), "크루 방문 암장"], [String(me?.stats?.myReviewCount ?? 0), "내 리뷰"]].map(([n, l], i) => (<div key={l} style={{ flex: 1, textAlign: "center", padding: "16px 0", borderLeft: i ? "2px dashed rgba(58,54,51,0.25)" : "none" }}><div style={{ fontSize: 20, fontWeight: 800 }}>{n}</div><div style={{ fontSize: 12, color: "#514C44", marginTop: 2 }}>{l}</div></div>))}</div>
+                <div style={{ fontSize: 11, color: "#A8A297", marginTop: 6, textAlign: "center" }}>일정·방문 수치는 {ac?.name ?? "현재 크루"} 기준이에요</div>
+              </div>
               <div style={{ padding: "24px 16px 0" }}><div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}><div style={sectionLabel}>내 완등 로그</div><div style={{ fontSize: 11, fontWeight: 700, color: "#514C44", background: "#F3EEDF", padding: "3px 9px", borderRadius: 999 }}>준비 중</div></div><div style={{ padding: 14, ...cardStyle, color: "#514C44", fontSize: 13 }}>완등 기록 기능은 준비 중이에요.</div></div>
               <div style={{ padding: "22px 16px 0" }}><div style={{ ...cardStyle, overflow: "hidden" }}>
                 <div onClick={() => showToast("알림 설정은 준비 중이에요")} style={{ display: "flex", alignItems: "center", gap: 8, padding: "15px 16px", borderBottom: "2px dashed rgba(58,54,51,0.2)", cursor: "pointer" }}><div style={{ flex: 1, fontSize: 15, color: "#514C44" }}>알림 설정</div><div style={{ fontSize: 11, fontWeight: 700, color: "#514C44", background: "#F3EEDF", padding: "3px 9px", borderRadius: 999 }}>준비 중</div></div>
@@ -1017,7 +1213,11 @@ export default function ClimbCrewApp() {
 
           {is("crewManage") && (
             <div style={{ animation: "ccfade .3s ease", paddingBottom: 100 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "56px 12px 4px" }}><BackBtn onClick={back} /><div><div style={{ fontSize: 20, fontWeight: 700, lineHeight: 1.1 }}>크루 관리</div><div style={{ fontSize: 13, color: "#514C44" }}>{ac?.name ?? ""}</div></div></div>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "56px 12px 4px" }}>
+                <BackBtn onClick={back} />
+                <div style={{ flex: 1 }}><div style={{ fontSize: 20, fontWeight: 700, lineHeight: 1.1 }}>크루 관리</div><div style={{ fontSize: 13, color: "#514C44" }}>{ac?.name ?? ""}</div></div>
+                {myRole === "LEADER" && <button onClick={openCrewEdit} style={{ height: 36, padding: "0 14px", marginRight: 4, border: `2px solid ${INK}`, borderRadius: WOBS[3], background: "#FFFEFA", fontSize: 14, fontWeight: 700, cursor: "pointer" }}>정보 수정</button>}
+              </div>
 
               {/* 초대 코드 */}
               <div style={{ padding: "18px 16px 0" }}>
@@ -1075,6 +1275,13 @@ export default function ClimbCrewApp() {
                     </div>
                   ))}
                 </div>
+              </div>
+
+              {/* 탈퇴 */}
+              <div style={{ padding: "30px 16px 0" }}>
+                <button onClick={() => setLeaveSheetOpen(true)} style={{ width: "100%", height: 48, border: "2px dashed rgba(209,67,67,0.5)", borderRadius: WOBS[2], background: "transparent", color: "#D14343", fontSize: 15, fontWeight: 700, cursor: "pointer" }}>
+                  {myRole === "LEADER" && members.length <= 1 ? "크루 삭제하고 나가기" : "크루 탈퇴"}
+                </button>
               </div>
             </div>
           )}
@@ -1177,6 +1384,11 @@ export default function ClimbCrewApp() {
             <>
               <div style={{ animation: "ccfade .3s ease", paddingBottom: 24 }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "56px 12px 8px" }}><BackBtn onClick={back} /><div style={{ fontSize: 20, fontWeight: 700 }}>투표 만들기</div></div>
+                {openPolls.length > 0 && (
+                  <div style={{ margin: "8px 16px 0", padding: "10px 14px", borderRadius: WOBS[1], border: `2px solid ${INK}`, background: "#FBF0DA", fontSize: 13, fontWeight: 700, color: "#B4432E", lineHeight: 1.5 }}>
+                    이미 진행 중인 투표가 {openPolls.length}개 있어요 · 같은 세션 투표를 또 만드는 건 아닌지 확인해주세요
+                  </div>
+                )}
                 <div style={{ padding: "12px 16px 0" }}>
                   <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 8 }}>제목</div>
                   <input value={pollTitle} onChange={(e) => setPollTitle(e.target.value)} placeholder="예: 이번 주말 어디 갈까?" style={{ width: "100%", height: 50, border: "2px solid #3A3633", borderRadius: 10, padding: "0 14px", fontSize: 15, background: "#fff", outline: "none" }} />
@@ -1272,11 +1484,11 @@ export default function ClimbCrewApp() {
 
         {showTabBar && (
           <div style={{ flexShrink: 0, display: "flex", background: "rgba(255,255,255,0.94)", backdropFilter: "blur(12px)", WebkitBackdropFilter: "blur(12px)", borderTop: "2px dashed rgba(58,54,51,0.25)", padding: "8px 4px 26px" }}>
-            <div onClick={() => tab("home")} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 4, cursor: "pointer" }}><svg width="24" height="24" viewBox="0 0 24 24" fill="none"><path d="M3 10.5 12 4l9 6.5V20a1 1 0 0 1-1 1h-4.5v-6h-7v6H4a1 1 0 0 1-1-1z" stroke={tc("home")} strokeWidth="1.8" strokeLinejoin="round" /></svg><div style={{ fontSize: 12, fontWeight: 700, color: tc("home") }}>홈</div></div>
-            <div onClick={() => tab("explore")} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 4, cursor: "pointer" }}><svg width="24" height="24" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="8.5" stroke={tc("explore")} strokeWidth="1.8" /><path d="M15.5 8.5 13 13l-4.5 2.5L11 11z" stroke={tc("explore")} strokeWidth="1.8" strokeLinejoin="round" /></svg><div style={{ fontSize: 12, fontWeight: 700, color: tc("explore") }}>탐색</div></div>
-            <div onClick={() => { if (!activeCrewId) { showToast("먼저 크루를 선택해주세요"); return; } openCreatePoll(); }} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "flex-start", cursor: "pointer" }}><div style={{ width: 52, height: 52, borderRadius: "52% 48% 46% 54% / 50% 46% 54% 50%", background: hatch(CRAYON.red), display: "flex", alignItems: "center", justifyContent: "center", marginTop: -22, border: `2.5px solid ${INK}`, transform: "rotate(-3deg)" }}><svg width="26" height="26" viewBox="0 0 24 24" fill="none"><path d="M12 5.2 11.8 19M5.2 12.2 19 12" stroke="#fff" strokeWidth="2.6" strokeLinecap="round" /></svg></div><div style={{ fontSize: 12, fontWeight: 700, color: "#514C44", marginTop: 3 }}>새 투표</div></div>
-            <div onClick={() => tab("calendar")} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 4, cursor: "pointer" }}><svg width="24" height="24" viewBox="0 0 24 24" fill="none"><rect x="3.5" y="5" width="17" height="15.5" rx="2.5" stroke={tc("calendar")} strokeWidth="1.8" /><path d="M3.5 9.5h17M8 3.5v3M16 3.5v3" stroke={tc("calendar")} strokeWidth="1.8" strokeLinecap="round" /></svg><div style={{ fontSize: 12, fontWeight: 700, color: tc("calendar") }}>캘린더</div></div>
-            <div onClick={() => tab("profile")} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 4, cursor: "pointer" }}><svg width="24" height="24" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="8" r="3.6" stroke={tc("profile")} strokeWidth="1.8" /><path d="M5 20c0-3.6 3.1-5.6 7-5.6s7 2 7 5.6" stroke={tc("profile")} strokeWidth="1.8" strokeLinecap="round" /></svg><div style={{ fontSize: 12, fontWeight: 700, color: tc("profile") }}>프로필</div></div>
+            <button aria-label="홈" onClick={() => tab("home")} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 4, cursor: "pointer", border: "none", background: "transparent", fontFamily: "inherit", padding: 0 }}><svg width="24" height="24" viewBox="0 0 24 24" fill="none"><path d="M3 10.5 12 4l9 6.5V20a1 1 0 0 1-1 1h-4.5v-6h-7v6H4a1 1 0 0 1-1-1z" stroke={tc("home")} strokeWidth="1.8" strokeLinejoin="round" /></svg><div style={{ fontSize: 12, fontWeight: 700, color: tc("home") }}>홈</div></button>
+            <button aria-label="탐색" onClick={() => tab("explore")} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 4, cursor: "pointer", border: "none", background: "transparent", fontFamily: "inherit", padding: 0 }}><svg width="24" height="24" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="8.5" stroke={tc("explore")} strokeWidth="1.8" /><path d="M15.5 8.5 13 13l-4.5 2.5L11 11z" stroke={tc("explore")} strokeWidth="1.8" strokeLinejoin="round" /></svg><div style={{ fontSize: 12, fontWeight: 700, color: tc("explore") }}>탐색</div></button>
+            <button aria-label="새 투표" onClick={() => { if (!activeCrewId) { showToast("먼저 크루를 선택해주세요"); return; } openCreatePoll(); }} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "flex-start", cursor: "pointer", border: "none", background: "transparent", fontFamily: "inherit", padding: 0 }}><div style={{ width: 52, height: 52, borderRadius: "52% 48% 46% 54% / 50% 46% 54% 50%", background: hatch(CRAYON.red), display: "flex", alignItems: "center", justifyContent: "center", marginTop: -22, border: `2.5px solid ${INK}`, transform: "rotate(-3deg)" }}><svg width="26" height="26" viewBox="0 0 24 24" fill="none"><path d="M12 5.2 11.8 19M5.2 12.2 19 12" stroke="#fff" strokeWidth="2.6" strokeLinecap="round" /></svg></div><div style={{ fontSize: 12, fontWeight: 700, color: "#514C44", marginTop: 3 }}>새 투표</div></button>
+            <button aria-label="캘린더" onClick={() => tab("calendar")} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 4, cursor: "pointer", border: "none", background: "transparent", fontFamily: "inherit", padding: 0 }}><svg width="24" height="24" viewBox="0 0 24 24" fill="none"><rect x="3.5" y="5" width="17" height="15.5" rx="2.5" stroke={tc("calendar")} strokeWidth="1.8" /><path d="M3.5 9.5h17M8 3.5v3M16 3.5v3" stroke={tc("calendar")} strokeWidth="1.8" strokeLinecap="round" /></svg><div style={{ fontSize: 12, fontWeight: 700, color: tc("calendar") }}>캘린더</div></button>
+            <button aria-label="프로필" onClick={() => tab("profile")} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 4, cursor: "pointer", border: "none", background: "transparent", fontFamily: "inherit", padding: 0 }}><svg width="24" height="24" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="8" r="3.6" stroke={tc("profile")} strokeWidth="1.8" /><path d="M5 20c0-3.6 3.1-5.6 7-5.6s7 2 7 5.6" stroke={tc("profile")} strokeWidth="1.8" strokeLinecap="round" /></svg><div style={{ fontSize: 12, fontWeight: 700, color: tc("profile") }}>프로필</div></button>
           </div>
         )}
 
@@ -1303,9 +1515,75 @@ export default function ClimbCrewApp() {
             <div style={{ position: "absolute", left: 0, right: 0, bottom: 0, zIndex: 130, background: "#FFFEFA", borderTop: `2.5px solid ${INK}`, borderRadius: "28px 22px 0 0 / 24px 28px 0 0", padding: "10px 16px 30px", boxShadow: "0 -8px 30px rgba(58,54,51,0.16)", animation: "ccsheet .28s cubic-bezier(.2,.8,.2,1)" }}>
               <div style={{ width: 44, height: 4, borderRadius: 999, background: "rgba(58,54,51,0.3)", margin: "6px auto 14px", transform: "rotate(-1deg)" }} />
               <div style={{ fontSize: 17, fontWeight: 800, margin: "0 4px 4px" }}>투표 마감</div>
-              <div style={{ fontSize: 13, color: "#514C44", margin: "0 4px 16px", lineHeight: 1.5 }}>최다 득표 날짜·암장으로 확정되고, 크루 방문 일정으로 등록돼요. 되돌릴 수 없어요.</div>
+              <div style={{ fontSize: 13, color: "#514C44", margin: "0 4px 12px", lineHeight: 1.5 }}>마감하면 아래 내용으로 확정되고 크루 일정에 등록돼요. 되돌릴 수 없어요.</div>
+              <div style={{ margin: "0 0 14px", padding: "14px 16px", ...cardStyle, borderRadius: WOBS[2] }}>
+                <div style={{ fontSize: 12, fontWeight: 700, color: "#514C44" }}>이렇게 확정돼요 · 가장 적게 겹치는 날</div>
+                <div style={{ fontSize: 20, fontWeight: 800, marginTop: 4 }}>{closeWinDate ? fmtDate(closeWinDate.date) : "날짜 후보 없음"}{closeWinDate ? <span style={{ fontSize: 13, fontWeight: 700, color: "#514C44" }}> · 불가 {voteCnt(closeWinDate)}명</span> : null}</div>
+                <div style={{ fontSize: 15, fontWeight: 700, marginTop: 4, color: closeWinGym ? INK : "#514C44" }}>{closeWinGym ? <>{closeWinGym.name} <span style={{ fontSize: 13, color: "#514C44" }}>· 선호 {closeWinGym.count}표</span></> : "암장 후보 없음 · 날짜만 확정돼요"}</div>
+                <div style={{ marginTop: 8, fontSize: 12, color: "#514C44", lineHeight: 1.45 }}>X 하지 않은 크루원은 자동으로 참석 처리돼요.{respondedCount === 0 ? <b style={{ color: "#B4432E" }}> 아직 아무도 응답하지 않았어요 — 가장 이른 날짜로 확정돼요.</b> : null}</div>
+              </div>
               <button onClick={closePoll} style={{ width: "100%", height: 52, fontSize: 18, fontWeight: 700, ...crayonBtn(CRAYON.red, 0) }}>마감하고 확정</button>
               <button onClick={() => setCloseSheetOpen(false)} style={{ width: "100%", height: 46, marginTop: 8, border: `2px solid ${INK}`, borderRadius: WOBS[2], background: "#FFFEFA", fontSize: 16, fontWeight: 700, cursor: "pointer" }}>취소</button>
+            </div>
+          </>
+        )}
+        {deletePollSheetOpen && (
+          <>
+            <div onClick={() => setDeletePollSheetOpen(false)} style={{ position: "absolute", inset: 0, background: "rgba(28,28,26,0.42)", zIndex: 120, animation: "ccfade .2s ease" }} />
+            <div style={{ position: "absolute", left: 0, right: 0, bottom: 0, zIndex: 130, background: "#FFFEFA", borderTop: `2.5px solid ${INK}`, borderRadius: "28px 22px 0 0 / 24px 28px 0 0", padding: "10px 16px 30px", boxShadow: "0 -8px 30px rgba(58,54,51,0.16)", animation: "ccsheet .28s cubic-bezier(.2,.8,.2,1)" }}>
+              <div style={{ width: 44, height: 4, borderRadius: 999, background: "rgba(58,54,51,0.3)", margin: "6px auto 14px", transform: "rotate(-1deg)" }} />
+              <div style={{ fontSize: 17, fontWeight: 800, margin: "0 4px 4px" }}>투표 삭제</div>
+              <div style={{ fontSize: 13, color: "#514C44", margin: "0 4px 16px", lineHeight: 1.5 }}>&apos;{openVote?.title ?? ""}&apos; 투표와 지금까지의 응답이 모두 지워져요. 되돌릴 수 없어요.</div>
+              <button onClick={deletePoll} style={{ width: "100%", height: 52, fontSize: 18, fontWeight: 700, ...crayonBtn(CRAYON.red, 0) }}>삭제하기</button>
+              <button onClick={() => setDeletePollSheetOpen(false)} style={{ width: "100%", height: 46, marginTop: 8, border: `2px solid ${INK}`, borderRadius: WOBS[2], background: "#FFFEFA", fontSize: 16, fontWeight: 700, cursor: "pointer" }}>취소</button>
+            </div>
+          </>
+        )}
+        {visitSheetOpen && (
+          <>
+            <div onClick={() => setVisitSheetOpen(false)} style={{ position: "absolute", inset: 0, background: "rgba(28,28,26,0.42)", zIndex: 120, animation: "ccfade .2s ease" }} />
+            <div style={{ position: "absolute", left: 0, right: 0, bottom: 0, zIndex: 130, background: "#FFFEFA", borderTop: `2.5px solid ${INK}`, borderRadius: "28px 22px 0 0 / 24px 28px 0 0", padding: "10px 16px 30px", boxShadow: "0 -8px 30px rgba(58,54,51,0.16)", animation: "ccsheet .28s cubic-bezier(.2,.8,.2,1)" }}>
+              <div style={{ width: 44, height: 4, borderRadius: 999, background: "rgba(58,54,51,0.3)", margin: "6px auto 14px", transform: "rotate(-1deg)" }} />
+              <div style={{ fontSize: 17, fontWeight: 800, margin: "0 4px 2px" }}>방문 기록 추가</div>
+              <div style={{ fontSize: 13, color: "#514C44", margin: "0 4px 14px" }}>{sg?.name ?? ""} · 크루 전체 일정에 추가돼요</div>
+              <div style={{ fontSize: 13, fontWeight: 700, color: "#514C44", margin: "0 4px 8px" }}>언제 갔어요?</div>
+              <input type="date" value={visitDate} onChange={(e) => setVisitDate(e.target.value)} style={{ width: "100%", height: 50, border: "2px solid #3A3633", borderRadius: 10, padding: "0 14px", fontSize: 15, background: "#fff", outline: "none", marginBottom: 14 }} />
+              <button onClick={recordVisit} style={{ width: "100%", height: 52, fontSize: 18, fontWeight: 700, ...crayonBtn(CRAYON.red, 0) }}>방문 기록 추가</button>
+              <button onClick={() => setVisitSheetOpen(false)} style={{ width: "100%", height: 46, marginTop: 8, border: `2px solid ${INK}`, borderRadius: WOBS[2], background: "#FFFEFA", fontSize: 16, fontWeight: 700, cursor: "pointer" }}>취소</button>
+            </div>
+          </>
+        )}
+        {crewEditOpen && (
+          <>
+            <div onClick={() => setCrewEditOpen(false)} style={{ position: "absolute", inset: 0, background: "rgba(28,28,26,0.42)", zIndex: 120, animation: "ccfade .2s ease" }} />
+            <div style={{ position: "absolute", left: 0, right: 0, bottom: 0, zIndex: 130, background: "#FFFEFA", borderTop: `2.5px solid ${INK}`, borderRadius: "28px 22px 0 0 / 24px 28px 0 0", padding: "10px 16px 30px", boxShadow: "0 -8px 30px rgba(58,54,51,0.16)", animation: "ccsheet .28s cubic-bezier(.2,.8,.2,1)", maxHeight: "85%", overflowY: "auto" }}>
+              <div style={{ width: 44, height: 4, borderRadius: 999, background: "rgba(58,54,51,0.3)", margin: "6px auto 14px", transform: "rotate(-1deg)" }} />
+              <div style={{ fontSize: 17, fontWeight: 800, margin: "0 4px 14px" }}>크루 정보 수정</div>
+              {([["크루 이름", "name"], ["한 줄 소개", "bio"], ["주 활동 지역", "region"], ["오픈카톡 링크", "kakao"]] as const).map(([label, key]) => (
+                <div key={key} style={{ marginBottom: 12 }}>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: "#514C44", marginBottom: 6 }}>{label}</div>
+                  <input value={(crewEdit as Any)[key]} onChange={(e) => setCrewEdit((f) => ({ ...f, [key]: e.target.value }))} style={{ width: "100%", height: 48, border: "2px solid #3A3633", borderRadius: 10, padding: "0 14px", fontSize: 15, background: "#fff", outline: "none" }} />
+                </div>
+              ))}
+              <button onClick={saveCrewEdit} style={{ width: "100%", height: 52, marginTop: 4, fontSize: 18, fontWeight: 700, ...crayonBtn(CRAYON.red, 0) }}>저장</button>
+            </div>
+          </>
+        )}
+        {leaveSheetOpen && (
+          <>
+            <div onClick={() => setLeaveSheetOpen(false)} style={{ position: "absolute", inset: 0, background: "rgba(28,28,26,0.42)", zIndex: 120, animation: "ccfade .2s ease" }} />
+            <div style={{ position: "absolute", left: 0, right: 0, bottom: 0, zIndex: 130, background: "#FFFEFA", borderTop: `2.5px solid ${INK}`, borderRadius: "28px 22px 0 0 / 24px 28px 0 0", padding: "10px 16px 30px", boxShadow: "0 -8px 30px rgba(58,54,51,0.16)", animation: "ccsheet .28s cubic-bezier(.2,.8,.2,1)" }}>
+              <div style={{ width: 44, height: 4, borderRadius: 999, background: "rgba(58,54,51,0.3)", margin: "6px auto 14px", transform: "rotate(-1deg)" }} />
+              <div style={{ fontSize: 17, fontWeight: 800, margin: "0 4px 4px" }}>{myRole === "LEADER" && members.length <= 1 ? "크루 삭제" : "크루 탈퇴"}</div>
+              <div style={{ fontSize: 13, color: "#514C44", margin: "0 4px 16px", lineHeight: 1.5 }}>
+                {myRole === "LEADER" && members.length <= 1
+                  ? `'${ac?.name ?? ""}' 크루와 투표·일정 기록이 모두 지워져요. 되돌릴 수 없어요.`
+                  : myRole === "LEADER"
+                    ? "크루장은 다른 멤버가 있는 동안 탈퇴할 수 없어요. (위임 기능 준비 중)"
+                    : `'${ac?.name ?? ""}' 크루에서 나가요. 다시 들어오려면 초대 코드가 필요해요.`}
+              </div>
+              {!(myRole === "LEADER" && members.length > 1) && <button onClick={leaveCrew} style={{ width: "100%", height: 52, fontSize: 18, fontWeight: 700, ...crayonBtn(CRAYON.red, 0) }}>{myRole === "LEADER" && members.length <= 1 ? "삭제하고 나가기" : "탈퇴하기"}</button>}
+              <button onClick={() => setLeaveSheetOpen(false)} style={{ width: "100%", height: 46, marginTop: 8, border: `2px solid ${INK}`, borderRadius: WOBS[2], background: "#FFFEFA", fontSize: 16, fontWeight: 700, cursor: "pointer" }}>{myRole === "LEADER" && members.length > 1 ? "확인" : "취소"}</button>
             </div>
           </>
         )}
@@ -1429,7 +1707,7 @@ export default function ClimbCrewApp() {
             </>
           );
         })()}
-        {!!toast && (<div style={{ position: "absolute", left: "50%", bottom: 110, transform: "translateX(-50%) rotate(-0.6deg)", background: hatch("58,54,51"), color: "#FFFDF6", fontSize: 16, fontWeight: 700, padding: "10px 20px", border: `2px solid ${INK}`, borderRadius: WOBS[1], boxShadow: "0 8px 24px rgba(58,54,51,0.25)", whiteSpace: "nowrap", animation: "cctoast .25s ease", zIndex: 100 }}>{toast}</div>)}
+        {!!toast && (<div style={{ position: "absolute", left: "50%", bottom: 110, transform: "translateX(-50%) rotate(-0.6deg)", background: hatch("58,54,51"), color: "#FFFDF6", fontSize: 16, fontWeight: 700, padding: "10px 20px", border: `2px solid ${INK}`, borderRadius: WOBS[1], boxShadow: "0 8px 24px rgba(58,54,51,0.25)", maxWidth: "calc(100% - 32px)", width: "max-content", textAlign: "center", lineHeight: 1.4, animation: "cctoast .25s ease", zIndex: 100 }}>{toast}</div>)}
       </div>
     </div>
   );
