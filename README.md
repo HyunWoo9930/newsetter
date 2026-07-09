@@ -41,6 +41,8 @@ npm run dev              # http://localhost:3000
 | POST | `/api/crews` | 크루 생성 (생성자=크루장) |
 | GET | `/api/crews` | 내 크루 목록 |
 | GET | `/api/crews/:crewId` | 크루 상세 + 멤버 |
+| PATCH | `/api/crews/:crewId` | 크루 정보 수정 (크루장) |
+| POST | `/api/crews/:crewId/leave` | 크루 탈퇴 (크루장은 혼자일 때만 → 크루 삭제) |
 | POST | `/api/crews/join` | 초대 코드로 즉시 가입 (승인 불필요) |
 | POST | `/api/crews/:crewId/requests` | 가입 신청 (PENDING) |
 | GET | `/api/crews/:crewId/requests` | 신청 목록 (크루장) |
@@ -62,8 +64,10 @@ npm run dev              # http://localhost:3000
 | POST/GET | `/api/crews/:crewId/polls` | 투표 생성 / 목록 |
 | GET | `/api/polls/:pollId` | 투표 상세 (후보별 득표 + 내 응답) |
 | POST | `/api/polls/:pollId/responses` | 응답 제출/수정 (날짜·암장 선택) |
-| POST | `/api/polls/:pollId/close` | 마감 → 최다 득표 확정 → 방문 자동 생성 |
+| POST | `/api/polls/:pollId/close` | 마감 → 최다 득표 확정 → 방문 자동 생성 (생성자·크루장만) |
+| DELETE | `/api/polls/:pollId` | 열린 투표 삭제 (생성자·크루장만) |
 | GET/POST | `/api/crews/:crewId/visits` | 방문 목록 / 수동 추가 |
+| DELETE | `/api/crews/:crewId/visits/:visitId` | 방문 기록 삭제 |
 
 ### 문제 · 완등 로그 · 난이도 정규화 · 추천
 | 메서드 | 경로 | 설명 |

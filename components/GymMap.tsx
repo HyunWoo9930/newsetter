@@ -103,10 +103,12 @@ export default function GymMap({ gyms, selectedId, onSelect }: { gyms: MapGym[];
   };
 
   if (!CLIENT_ID) {
+    // 개발자용 안내는 콘솔로 — 최종 사용자에겐 친절한 문구만
+    if (typeof window !== "undefined") console.warn("[GymMap] NEXT_PUBLIC_NAVER_MAP_CLIENT_ID 가 없어 지도를 비활성화합니다 (.env 참고)");
     return (
-      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: "100%", padding: 24, textAlign: "center", color: "#6E675C", fontSize: 15 }}>
+      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: "100%", padding: 24, textAlign: "center", color: "#6E675C", fontSize: 15, lineHeight: 1.6 }}>
         <div style={{ fontSize: 40, marginBottom: 8 }}>🗺️</div>
-        지도 키가 아직 없어요.<br />NCP Maps Client ID 를 <code>.env</code> 의 <code>NEXT_PUBLIC_NAVER_MAP_CLIENT_ID</code> 에 넣어주세요.
+        지금은 지도를 볼 수 없어요.<br />오른쪽 위 버튼으로 목록에서 찾아보세요.
       </div>
     );
   }

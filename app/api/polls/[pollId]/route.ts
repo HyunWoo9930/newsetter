@@ -1,7 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import { getCurrentUserId } from "@/lib/auth";
-import { json, unauthorized, forbidden, notFound } from "@/lib/http";
-import { getApprovedMembership } from "@/lib/crew";
+import { json, error, unauthorized, forbidden, notFound } from "@/lib/http";
+import { getApprovedMembership, isCrewLeader } from "@/lib/crew";
 
 // 투표 상세: 날짜/암장 후보별 득표수 + 내 응답
 export async function GET(_req: Request, { params }: { params: Promise<{ pollId: string }> }) {
@@ -44,4 +44,22 @@ export async function GET(_req: Request, { params }: { params: Promise<{ pollId:
       gymOptionIds: myGymVotes.map((v) => v.gymOptionId),
     },
   });
+}
+
+// 투표 삭제 — 생성자 또는 크루장만, 열려 있는 투표만 (마감된 투표는 방문 기록과 엮여 있어 보존)
+export async function DELETE(_req: Request, { params }: { params: Promise<{ pollId: string }> }) {
+  const userId = await getCurrentUserId();
+  if (!userId) return unauthorized();
+  const { pollId } = await params;
+
+  const poll = await prisma.poll.findUnique({ where: { id: pollId }, select: { id: true, crewId: true, creatorId: true, status: true } });
+  if (!poll) return notFound("투표");
+  if (!(await getApprovedMembership(poll.crewId, userId))) return forbidden();
+  if (poll.status === "CLOSED") return error("마감된 투표는 삭제할 수 없어요", 409);
+  if (poll.creatorId !== userId && !(await isCrewLeader(poll.crewId, userId))) {
+    return error("투표를 만든 사람 또는 크루장만 삭제할 수 있어요", 403);
+  }
+
+  await prisma.poll.delete({ where: { id: pollId } });
+  return json({ ok: true });
 }
