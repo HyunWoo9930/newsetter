@@ -16,7 +16,7 @@ const createSchema = z.object({
   rangeStart: dayStr,
   rangeEnd: dayStr,
   // 암장 후보 (선택 — 없어도 투표 생성 가능)
-  gymIds: z.array(z.string()).default([]),
+  gymIds: z.array(z.string()).max(20).default([]),
 });
 
 // 투표 생성 (멤버 누구나)
@@ -39,8 +39,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ crewId:
   for (let t = start.getTime(); t <= end.getTime(); t += 86400000) days.push(new Date(t));
   if (days.length > 31) return error("날짜 범위는 최대 31일까지예요", 422);
 
-  // 중복 제거된 암장만
+  // 중복 제거된 암장만. 최소 1곳은 있어야 마감 시 일정(날짜+암장)이 생김.
   const uniqueGymIds = [...new Set(gymIds)];
+  if (uniqueGymIds.length === 0) return error("암장 후보를 최소 한 곳 골라주세요", 422);
   const foundGyms = await prisma.gym.count({ where: { id: { in: uniqueGymIds } } });
   if (foundGyms !== uniqueGymIds.length) return error("존재하지 않는 암장이 포함되어 있습니다", 422);
 
@@ -78,15 +79,9 @@ export async function GET(_req: Request, { params }: { params: Promise<{ crewId:
   });
 
   const pollIds = polls.map((p) => p.id);
-  const [dv, gv] = await Promise.all([
-    prisma.pollDateVote.findMany({ where: { pollId: { in: pollIds } }, select: { pollId: true, userId: true } }),
-    prisma.pollGymVote.findMany({ where: { pollId: { in: pollIds } }, select: { pollId: true, userId: true } }),
-  ]);
-  const respByPoll = new Map<string, Set<string>>();
-  for (const v of [...dv, ...gv]) {
-    if (!respByPoll.has(v.pollId)) respByPoll.set(v.pollId, new Set());
-    respByPoll.get(v.pollId)!.add(v.userId);
-  }
+  // 응답자 = PollResponse 행 기준 ("다 가능"으로 X 0개 낸 사람도 포함). 표는 무시.
+  const responses = await prisma.pollResponse.groupBy({ by: ["pollId"], where: { pollId: { in: pollIds } }, _count: { userId: true } });
+  const respCount = new Map(responses.map((r) => [r.pollId, r._count.userId]));
 
   const confirmedIds = polls.map((p) => p.confirmedGymId).filter((x): x is string => !!x);
   const cgyms = confirmedIds.length
@@ -97,7 +92,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ crewId:
   return json(
     polls.map((p) => ({
       ...p,
-      responderCount: respByPoll.get(p.id)?.size ?? 0,
+      responderCount: respCount.get(p.id) ?? 0,
       confirmedGymName: p.confirmedGymId ? gymNameById.get(p.confirmedGymId) ?? null : null,
     }))
   );

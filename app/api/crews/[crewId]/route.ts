@@ -21,7 +21,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ crewId:
         include: { user: { select: { id: true, nickname: true, profileImg: true } } },
         orderBy: { createdAt: "asc" },
       },
-      _count: { select: { members: true } },
+      _count: { select: { members: { where: { status: "APPROVED" } } } },
     },
   });
   if (!crew) return notFound("크루");
@@ -32,7 +32,7 @@ const patchSchema = z.object({
   name: z.string().min(1, "크루 이름을 입력해주세요").max(40).optional(),
   description: z.string().max(200).nullable().optional(),
   region: z.string().max(60).nullable().optional(),
-  openChatUrl: z.string().max(300).nullable().optional(),
+  openChatUrl: z.string().url("올바른 링크가 아니에요").max(300).or(z.literal("")).nullable().optional(),
 });
 
 // 크루 정보 수정 (크루장만)

@@ -41,45 +41,34 @@ export async function POST(_req: Request, { params }: { params: Promise<{ pollId
     ? [...poll.gymOptions].sort((a, b) => b._count.votes - a._count.votes)[0]
     : null;
 
-  const updatedPoll = await prisma.poll.update({
-    where: { id: pollId },
-    data: {
-      status: "CLOSED",
-      confirmedDate: winnerDate.date,
-      confirmedGymId: winnerGym?.gymId ?? null,
-    },
+  const settingId = winnerGym ? await settingIdForVisit(winnerGym.gymId, winnerDate.date) : null;
+  const xedUsers = new Set(winnerDate.votes.map((v) => v.userId));
+
+  // 원자적으로: OPEN 일 때만 CLOSED 로(레이스/더블탭 방지), 같은 트랜잭션에서 일정·참석까지.
+  const result = await prisma.$transaction(async (tx) => {
+    const upd = await tx.poll.updateMany({
+      where: { id: pollId, status: "OPEN" },
+      data: { status: "CLOSED", confirmedDate: winnerDate.date, confirmedGymId: winnerGym?.gymId ?? null },
+    });
+    if (upd.count === 0) return { raced: true as const };
+
+    let visit = null;
+    if (winnerGym) {
+      visit = await tx.visit.create({
+        data: { crewId: poll.crewId, gymId: winnerGym.gymId, gymSettingId: settingId, date: winnerDate.date, source: "VOTE", createdById: userId },
+      });
+      // #4 확정된 날짜에 X(불가) 안 한 승인 크루원 자동 참석
+      const members = await tx.crewMember.findMany({ where: { crewId: poll.crewId, status: "APPROVED" }, select: { userId: true } });
+      const goingUserIds = members.map((m) => m.userId).filter((uid) => !xedUsers.has(uid));
+      if (goingUserIds.length) {
+        await tx.visitAttendee.createMany({ data: goingUserIds.map((uid) => ({ visitId: visit!.id, userId: uid })), skipDuplicates: true });
+      }
+    }
+    return { raced: false as const, visit };
   });
 
-  let visit = null;
-  if (winnerGym) {
-    const settingId = await settingIdForVisit(winnerGym.gymId, winnerDate.date);
-    visit = await prisma.visit.create({
-      data: {
-        crewId: poll.crewId,
-        gymId: winnerGym.gymId,
-        gymSettingId: settingId,
-        date: winnerDate.date,
-        source: "VOTE",
-        createdById: userId,
-      },
-    });
+  if (result.raced) return error("이미 마감된 투표입니다", 409);
 
-    // #4 확정된 날짜에 X(불가) 안 한 승인 크루원을 자동 참석으로 등록
-    const xedUsers = new Set(winnerDate.votes.map((v) => v.userId));
-    const members = await prisma.crewMember.findMany({
-      where: { crewId: poll.crewId, status: "APPROVED" },
-      select: { userId: true },
-    });
-    const goingUserIds = members.map((m) => m.userId).filter((uid) => !xedUsers.has(uid));
-    if (goingUserIds.length) {
-      await prisma.visitAttendee.createMany({
-        data: goingUserIds.map((uid) => ({ visitId: visit!.id, userId: uid })),
-        skipDuplicates: true,
-      });
-    }
-  }
-
-  emitCrew(poll.crewId, { type: "poll_closed", pollId, title: poll.title, visitId: visit?.id ?? null, userId });
-
-  return json({ poll: updatedPoll, visit });
+  emitCrew(poll.crewId, { type: "poll_closed", pollId, title: poll.title, visitId: result.visit?.id ?? null, userId });
+  return json({ ok: true, confirmedDate: winnerDate.date, confirmedGymId: winnerGym?.gymId ?? null, visit: result.visit });
 }

@@ -21,6 +21,11 @@ export async function POST(req: Request) {
   if (!parsed.ok) return parsed.response;
   const { name, description, region, openChatUrl, homeGymIds } = parsed.data;
   const uniqueHomeGymIds = [...new Set(homeGymIds ?? [])];
+  // 존재하지 않는 암장 id 면 FK 500 대신 명확한 에러 (오래된 캐시 등)
+  if (uniqueHomeGymIds.length) {
+    const found = await prisma.gym.count({ where: { id: { in: uniqueHomeGymIds } } });
+    if (found !== uniqueHomeGymIds.length) return error("존재하지 않는 암장이 포함되어 있어요", 422);
+  }
 
   for (let attempt = 0; attempt < 5; attempt++) {
     try {
@@ -62,7 +67,7 @@ export async function GET() {
 
   const crews = await prisma.crew.findMany({
     where: { members: { some: { userId, status: "APPROVED" } } },
-    include: { _count: { select: { members: true } } },
+    include: { _count: { select: { members: { where: { status: "APPROVED" } } } } },
     orderBy: { createdAt: "desc" },
   });
   return json(crews);

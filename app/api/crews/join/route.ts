@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { getCurrentUserId } from "@/lib/auth";
-import { json, error, unauthorized, notFound, parseBody } from "@/lib/http";
+import { json, error, unauthorized, parseBody } from "@/lib/http";
 
 const schema = z.object({
   inviteCode: z.string().min(1, "초대 코드를 입력해주세요"),
@@ -15,11 +15,15 @@ export async function POST(req: Request) {
   const parsed = await parseBody(req, schema);
   if (!parsed.ok) return parsed.response;
 
+  // 접두사 없이 "8H2K" 만 입력해도 되도록 정규화
+  let code = parsed.data.inviteCode.trim().toUpperCase().replace(/\s/g, "");
+  if (!code.startsWith("CREW-")) code = "CREW-" + code.replace(/^CREW-?/, "");
+
   const crew = await prisma.crew.findUnique({
-    where: { inviteCode: parsed.data.inviteCode.trim().toUpperCase() },
+    where: { inviteCode: code },
     select: { id: true, name: true },
   });
-  if (!crew) return notFound("크루");
+  if (!crew) return error("초대 코드를 찾을 수 없어요. 다시 확인해주세요 (예: CREW-8H2K)", 404);
 
   const existing = await prisma.crewMember.findUnique({
     where: { crewId_userId: { crewId: crew.id, userId } },

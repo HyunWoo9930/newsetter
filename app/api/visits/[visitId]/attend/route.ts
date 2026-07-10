@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { getCurrentUserId } from "@/lib/auth";
-import { json, unauthorized, forbidden, notFound, parseBody } from "@/lib/http";
+import { json, error, unauthorized, forbidden, notFound, parseBody } from "@/lib/http";
 import { getApprovedMembership } from "@/lib/crew";
 import { emitCrew } from "@/lib/events";
 
@@ -13,7 +13,7 @@ export async function PUT(req: Request, { params }: { params: Promise<{ visitId:
   if (!userId) return unauthorized();
   const { visitId } = await params;
 
-  const visit = await prisma.visit.findUnique({ where: { id: visitId }, select: { id: true, crewId: true } });
+  const visit = await prisma.visit.findUnique({ where: { id: visitId }, select: { id: true, crewId: true, date: true } });
   if (!visit) return notFound("일정");
   if (!visit.crewId) return forbidden(); // 개인 기록엔 참여 개념이 없음
   const crewId = visit.crewId;
@@ -21,6 +21,10 @@ export async function PUT(req: Request, { params }: { params: Promise<{ visitId:
 
   const parsed = await parseBody(req, schema);
   if (!parsed.ok) return parsed.response;
+
+  // 지난 일정엔 새로 참여 불가 (기록 왜곡 방지). 이미 참여했던 걸 취소하는 건 허용.
+  const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0);
+  if (parsed.data.going && visit.date < todayStart) return error("지난 일정에는 참여할 수 없어요", 422);
 
   if (parsed.data.going) {
     await prisma.visitAttendee.upsert({

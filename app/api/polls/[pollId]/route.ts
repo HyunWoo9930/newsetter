@@ -33,9 +33,10 @@ export async function GET(_req: Request, { params }: { params: Promise<{ pollId:
 
   if (!(await getApprovedMembership(poll.crewId, userId))) return forbidden();
 
-  const [myDateVotes, myGymVotes] = await Promise.all([
+  const [myDateVotes, myGymVotes, myResponse] = await Promise.all([
     prisma.pollDateVote.findMany({ where: { pollId, userId }, select: { dateOptionId: true } }),
     prisma.pollGymVote.findMany({ where: { pollId, userId }, select: { gymOptionId: true } }),
+    prisma.pollResponse.findUnique({ where: { pollId_userId: { pollId, userId } }, select: { id: true } }),
   ]);
 
   return json({
@@ -43,6 +44,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ pollId:
     myVotes: {
       dateOptionIds: myDateVotes.map((v) => v.dateOptionId),
       gymOptionIds: myGymVotes.map((v) => v.gymOptionId),
+      responded: !!myResponse, // X 0개(다 가능)로 냈어도 true
     },
   });
 }

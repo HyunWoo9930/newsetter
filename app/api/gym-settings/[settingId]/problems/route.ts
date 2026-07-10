@@ -73,7 +73,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ setting
 
 const createSchema = z.object({
   color: z.string().min(1, "색을 입력해주세요").max(20),
-  grade: z.number().int().optional(),
+  grade: z.number().int().min(0).max(20).optional(),
   label: z.string().max(40).optional(),
   photoUrl: z.string().url().optional().or(z.literal("")),
 });

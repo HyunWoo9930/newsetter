@@ -6,8 +6,8 @@ import { getApprovedMembership } from "@/lib/crew";
 import { emitCrew } from "@/lib/events";
 
 const schema = z.object({
-  dateOptionIds: z.array(z.string()).default([]),
-  gymOptionIds: z.array(z.string()).default([]),
+  dateOptionIds: z.array(z.string()).max(100).default([]),
+  gymOptionIds: z.array(z.string()).max(20).default([]),
 });
 
 // 내 응답 제출/수정 (기존 응답을 갈아끼움)
@@ -25,6 +25,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ pollId:
   });
   if (!poll) return notFound("투표");
   if (poll.status === "CLOSED") return error("이미 마감된 투표입니다", 409);
+  if (poll.deadline && poll.deadline < new Date()) return error("응답 기한이 지났어요", 409);
   if (!(await getApprovedMembership(poll.crewId, userId))) return forbidden();
 
   const parsed = await parseBody(req, schema);
@@ -45,8 +46,14 @@ export async function POST(req: Request, { params }: { params: Promise<{ pollId:
     prisma.pollGymVote.createMany({
       data: gymOptionIds.map((gymOptionId) => ({ pollId, userId, gymOptionId })),
     }),
+    // "다 가능"(X 0개)도 유효 응답 → 응답 기록을 남겨 응답자 수/재방문 상태를 정확히.
+    prisma.pollResponse.upsert({
+      where: { pollId_userId: { pollId, userId } },
+      create: { pollId, userId },
+      update: {},
+    }),
   ]);
 
   emitCrew(poll.crewId, { type: "vote_submitted", pollId, userId });
-  return json({ ok: true, dateOptionIds, gymOptionIds });
+  return json({ ok: true, dateOptionIds, gymOptionIds, responded: true });
 }

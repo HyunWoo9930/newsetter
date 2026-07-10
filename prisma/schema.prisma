@@ -67,6 +67,7 @@ model User {
   createdProblems Problem[]          @relation("ProblemCreator")
   createdVisits   Visit[]            @relation("VisitCreator")
   visitAttendance VisitAttendee[]
+  pollResponses   PollResponse[]
 }
 
 model Crew {
@@ -209,8 +210,24 @@ model Poll {
   gymOptions  PollGymOption[]
   dateVotes   PollDateVote[]
   gymVotes    PollGymVote[]
+  responses   PollResponse[]
 
   @@index([crewId, status])
+}
+
+// 응답 여부(참여) 기록. "안 되는 날" 모델에선 X 0개(=다 가능)도 유효 응답이라
+// 표 존재만으로 응답자를 세면 틀린다. 응답할 때 이 행을 upsert 해서 응답자 수를 센다.
+model PollResponse {
+  id        String   @id @default(cuid())
+  pollId    String
+  userId    String
+  createdAt DateTime @default(now())
+
+  poll Poll @relation(fields: [pollId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([pollId, userId])
+  @@index([pollId])
 }
 
 model PollDateOption {

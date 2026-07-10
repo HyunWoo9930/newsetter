@@ -22,6 +22,11 @@ body {
   font-family: "Gaegu", "Pretendard Variable", Pretendard, -apple-system, system-ui, sans-serif;
 }
 
+/* iOS Safari 는 폰트 16px 미만 입력창에 포커스하면 화면을 확대해버림 → 최소 16px 보장 */
+input, textarea, select {
+  font-size: 16px !important;
+}
+
 /* 얇게(400) 지정된 곳도 최소 600 이상으로 끌어올려 가독성 확보 */
 body :where([style*="font-weight: 400"], [style*="font-weight:400"]) {
   font-weight: 600 !important;

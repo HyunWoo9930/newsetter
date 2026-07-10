@@ -15,7 +15,8 @@ export async function GET(req: Request) {
       _count: { select: { reviews: true } },
     },
     orderBy: { name: "asc" },
-    take: 50,
+    // 검색이면 상위 40, 전체 목록이면 클라 피커가 로컬 필터하므로 전부(현재 ~170) 반환
+    take: q ? 40 : 500,
   });
   return json(gyms);
 }

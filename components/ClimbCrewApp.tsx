@@ -168,6 +168,7 @@ export default function ClimbCrewApp() {
   const [visitDate, setVisitDate] = useState("");
   const [crewLoaded, setCrewLoaded] = useState(false);
   const [creating, setCreating] = useState(false);
+  const [busy, setBusy] = useState(false); // 더블 서브밋 방지(투표/리뷰/기록/마감/참여 등)
   const [crewEditOpen, setCrewEditOpen] = useState(false);
   const [crewEdit, setCrewEdit] = useState({ name: "", bio: "", region: "", kakao: "" });
   const [leaveSheetOpen, setLeaveSheetOpen] = useState(false);
@@ -210,9 +211,9 @@ export default function ClimbCrewApp() {
     // 딥링크로 바로 들어온 경우 등 — 뒤가 없으면 홈으로
     replaceNav("home"); setScreen("home");
   };
-  const openGym = (id: string) => { setSelGym(id); pushNav("gymDetail", { gym: id }); setScreen("gymDetail"); };
-  const openProblems = (gymId: string, settingId: string | null) => { setSelGym(gymId); setSelSettingId(settingId); pushNav("probList", { gym: gymId, setting: settingId }); setScreen("probList"); };
-  const openProb = (id: string) => { setSelProb(id); pushNav("probDetail", { prob: id }); setScreen("probDetail"); };
+  const openGym = (id: string) => { if (id !== selGym) { setGymDetail(null); setGymReviews([]); } setSelGym(id); pushNav("gymDetail", { gym: id }); setScreen("gymDetail"); };
+  const openProblems = (gymId: string, settingId: string | null) => { setProblemsData(null); setSelGym(gymId); setSelSettingId(settingId); pushNav("probList", { gym: gymId, setting: settingId }); setScreen("probList"); };
+  const openProb = (id: string) => { if (id !== selProb) setProbDetail(null); setSelProb(id); pushNav("probDetail", { prob: id }); setScreen("probDetail"); };
   const goVote = (pollId: string) => { setSelPollId(pollId); pushNav("vote", { poll: pollId }); setScreen("vote"); };
 
   // 뒤로가기/앞으로가기 → 히스토리 상태에서 화면 복원
@@ -238,6 +239,8 @@ export default function ClimbCrewApp() {
   useEffect(() => {
     api.gymsList().then(setAllGymsList).catch(() => {});
     const sp = new URLSearchParams(window.location.search);
+    // 카카오 로그인 취소/실패 시 next-auth 가 ?error= 를 붙여 돌려보냄 → 안내 후 URL 정리
+    if (sp.get("error")) { showToast("카카오 로그인에 실패했어요. 다시 시도해주세요"); try { window.history.replaceState(null, "", "/"); } catch {} }
     const inv = sp.get("invite");
     if (inv) { setJoinCode(inv.toUpperCase()); setInvitePending(true); }
     const s = sp.get("s");
@@ -299,36 +302,52 @@ export default function ClimbCrewApp() {
     return () => { window.removeEventListener("pageshow", refetch); document.removeEventListener("visibilitychange", onVis); };
   }, [status, loadCrews]);
 
-  // #7 실시간 알림(SSE): 내 크루들의 이벤트를 받아 토스트 + 자동 새로고침
+  // #7 실시간 알림(SSE) — 최신 상태는 ref 로 참조(재연결 없이).
   const activeCrewRef = useRef<string | null>(null);
+  const sseRef = useRef({ screen: "", mode: "crew", openPollId: null as string | null, reloadPersonal: () => {} });
   useEffect(() => { activeCrewRef.current = activeCrewId; }, [activeCrewId]);
+  const crewIdsKey = crews.map((c: Any) => c.id).sort().join(",");
   useEffect(() => {
     if (status !== "authenticated") return;
-    const es = new EventSource("/api/events");
-    es.onmessage = (ev) => {
-      let e: Any; try { e = JSON.parse(ev.data); } catch { return; }
-      if (!e || e.type === "hello") return;
-      const msgMap: Record<string, string> = {
-        poll_created: "🗳️ 새 투표가 올라왔어요",
-        vote_submitted: "✍️ 누군가 투표했어요",
-        poll_closed: `✅ 투표 마감: ${e.title ?? ""}`,
-        poll_deleted: "🗑️ 투표가 삭제됐어요",
-        visit_created: "📅 새 일정이 잡혔어요",
-        visit_updated: "🔁 일정이 변경됐어요",
-        visit_canceled: "❌ 일정이 취소됐어요",
-        visit_attend: "🙋 일정 참여자가 바뀌었어요",
-      };
-      if (msgMap[e.type]) showToast(msgMap[e.type]);
-      const cur = activeCrewRef.current;
-      if (cur && e.crewId === cur) {
-        api.crewPolls(cur).then(setPolls).catch(() => {});
-        api.crewVisits(cur).then(setVisits).catch(() => {});
-        api.crewGyms(cur).then(setCrewGyms).catch(() => {});
+    let es: EventSource | null = null, closed = false, retry = 0;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const pending = new Set<string>();
+    const MSG: Record<string, (e: Any) => string> = {
+      poll_created: () => "🗳️ 새 투표가 올라왔어요", vote_submitted: () => "✍️ 누군가 투표했어요",
+      poll_closed: (e) => `✅ 투표 마감: ${e.title ?? ""}`, poll_deleted: () => "🗑️ 투표가 삭제됐어요",
+      visit_created: () => "📅 새 일정이 잡혔어요", visit_updated: () => "🔁 일정이 변경됐어요",
+      visit_canceled: () => "❌ 일정이 취소됐어요", visit_attend: () => "🙋 일정 참여자가 바뀌었어요",
+    };
+    const flush = () => {
+      const cur = activeCrewRef.current; const t = new Set(pending); pending.clear();
+      if (!cur) return;
+      const pollish = t.has("poll_created") || t.has("poll_closed") || t.has("poll_deleted") || t.has("vote_submitted");
+      const visitish = t.has("visit_created") || t.has("visit_updated") || t.has("visit_canceled") || t.has("visit_attend") || t.has("poll_closed");
+      // 목록은 병합(달력 등 상세 데이터 유지) — B3
+      if (pollish) api.crewPolls(cur).then((list: Any) => setPolls((prev) => list.map((p: Any) => { const old = prev.find((x: Any) => x.id === p.id); return old ? { ...old, ...p } : p; }))).catch(() => {});
+      if (visitish) { api.crewVisits(cur).then(setVisits).catch(() => {}); api.crewGyms(cur).then(setCrewGyms).catch(() => {}); }
+      if (sseRef.current.mode === "personal") sseRef.current.reloadPersonal();
+      // 투표 화면이면 열린 투표 상세만 다시 채워 달력 유지
+      if (sseRef.current.screen === "vote" && sseRef.current.openPollId) {
+        api.poll(sseRef.current.openPollId).then((p: Any) => setPolls((prev) => prev.map((x: Any) => (x.id === p.id ? { ...x, ...p } : x)))).catch(() => {});
       }
     };
-    es.onerror = () => { /* 브라우저가 자동 재연결 */ };
-    return () => es.close();
-  }, [status]); // eslint-disable-line react-hooks/exhaustive-deps
+    const connect = () => {
+      es = new EventSource("/api/events");
+      es.onopen = () => { retry = 0; };
+      es.onmessage = (ev) => {
+        let e: Any; try { e = JSON.parse(ev.data); } catch { return; }
+        if (!e || e.type === "hello") return;
+        if (MSG[e.type]) showToast(MSG[e.type](e));
+        if (e.crewId === activeCrewRef.current) { pending.add(e.type); if (timer) clearTimeout(timer); timer = setTimeout(flush, 1200); }
+      };
+      es.onerror = () => { es?.close(); if (closed) return; retry = Math.min(retry + 1, 6); setTimeout(() => { if (!closed) connect(); }, Math.min(3000 * retry, 30000)); };
+    };
+    connect();
+    const onVis = () => { if (document.visibilityState === "visible" && es && es.readyState === 2) { es.close(); connect(); } };
+    document.addEventListener("visibilitychange", onVis);
+    return () => { closed = true; if (timer) clearTimeout(timer); document.removeEventListener("visibilitychange", onVis); es?.close(); };
+  }, [status, crewIdsKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // 카카오톡 공유 SDK (JS 키가 있을 때만 로드)
   useEffect(() => {
@@ -347,6 +366,16 @@ export default function ClimbCrewApp() {
   useEffect(() => {
     if (status === "authenticated" && bootstrapped && screen === "login") enterApp(crews);
   }, [status, bootstrapped, screen, crews]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // 세션 만료/로그아웃 감지 — 남은 데이터를 비우고 깔끔히 로그인 화면으로(M3)
+  useEffect(() => {
+    if (kakaoEnabled && status === "unauthenticated" && screen !== "login") {
+      setCrews([]); setActiveCrewId(null); setCrewDetail(null); setCrewGyms([]); setPolls([]); setVisits([]); setRequests([]);
+      setMyGyms([]); setMyVisits([]); setPersonalLoaded(false); setMe(null); setGymDetail(null); setProbDetail(null);
+      setMode("crew"); setJoinCode(""); setBootstrapped(false);
+      setScreen("login");
+    }
+  }, [status]); // eslint-disable-line react-hooks/exhaustive-deps
   // 개발 모드(카카오 미연동)에선 dev 유저가 확인되면 자동 진입 — 새로고침해도 화면 유지
   useEffect(() => {
     if (!kakaoEnabled && bootstrapped && me && screen === "login") enterApp(crews);
@@ -388,17 +417,17 @@ export default function ClimbCrewApp() {
   useEffect(() => { if (me?.id) reloadPersonal(); }, [me?.id, reloadPersonal]);
   useEffect(() => { if (mode === "personal" && me?.id) reloadPersonal(); }, [mode]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // 암장 상세
+  // 암장 상세 — 실패하면 흰 화면 대신 안내 후 뒤로
   useEffect(() => {
     if (screen !== "gymDetail" || !selGym) return;
-    api.gym(selGym, activeCrewId || undefined).then(setGymDetail).catch(() => {});
+    api.gym(selGym, activeCrewId || undefined).then(setGymDetail).catch(() => { showToast("암장 정보를 불러오지 못했어요"); back(); });
     api.gymReviews(selGym).then(setGymReviews).catch(() => setGymReviews([]));
-  }, [screen, selGym, activeCrewId]);
+  }, [screen, selGym, activeCrewId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // 문제 목록
   useEffect(() => { if (screen === "probList" && selSettingId) api.problems(selSettingId).then(setProblemsData).catch(() => {}); }, [screen, selSettingId]);
   // 문제 상세
-  useEffect(() => { if (screen === "probDetail" && selProb) api.problem(selProb).then(setProbDetail).catch(() => {}); }, [screen, selProb]);
+  useEffect(() => { if (screen === "probDetail" && selProb) api.problem(selProb).then(setProbDetail).catch(() => { showToast("문제 정보를 불러오지 못했어요"); back(); }); }, [screen, selProb]); // eslint-disable-line react-hooks/exhaustive-deps
   // 추천 (홈 + 추천화면)
   useEffect(() => { if (selSettingId) api.recommendations(selSettingId, growthMode).then(setRecos).catch(() => {}); }, [selSettingId, growthMode]);
   // 완등 기록 대상 문제
@@ -410,14 +439,18 @@ export default function ClimbCrewApp() {
 
   // 진행 중인 투표 — 여러 개 열려 있을 수 있음. 투표 화면은 선택된 것(없으면 첫 번째)을 보여줌.
   const openPolls = polls.filter((p) => p.status === "OPEN");
-  const openPoll = (selPollId ? openPolls.find((p) => p.id === selPollId) : null) || openPolls[0] || null;
+  // 공유 링크로 특정 투표를 지목했는데 그 사이 마감/삭제됐으면, 엉뚱한 투표로 빠지지 말고 안내(M6).
+  const selectedPollMissing = !!selPollId && !openPolls.some((p) => p.id === selPollId);
+  const openPoll = selPollId ? (openPolls.find((p) => p.id === selPollId) || null) : (openPolls[0] || null);
+  // SSE 콜백이 참조할 최신 상태
+  sseRef.current = { screen, mode, openPollId: openPoll?.id ?? null, reloadPersonal };
   useEffect(() => {
     if (screen !== "vote" || !openPoll) return;
     api.poll(openPoll.id).then((p: Any) => {
       setPolls((prev) => prev.map((x) => (x.id === p.id ? { ...x, ...p } : x)));
       const d: Record<string, boolean> = {}; p.myVotes.dateOptionIds.forEach((id: string) => (d[id] = true));
       const gy: Record<string, boolean> = {}; p.myVotes.gymOptionIds.forEach((id: string) => (gy[id] = true));
-      setVoteDates(d); setVoteGyms(gy); setVoteSubmitted(p.myVotes.dateOptionIds.length + p.myVotes.gymOptionIds.length > 0);
+      setVoteDates(d); setVoteGyms(gy); setVoteSubmitted(!!p.myVotes.responded || p.myVotes.dateOptionIds.length + p.myVotes.gymOptionIds.length > 0);
       setVoteTab("date"); setFocusDay(null);
     }).catch(() => showToast("투표를 불러오지 못했어요"));
   }, [screen, openPoll?.id]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -436,10 +469,10 @@ export default function ClimbCrewApp() {
     } catch (e: Any) { showToast(e.message); }
     finally { setCreating(false); }
   };
-  const joinByCode = async () => { if (!joinCode.trim()) { showToast("초대 코드를 입력해주세요"); return; } try { const r: Any = await api.post("/api/crews/join", { inviteCode: joinCode }); const cs: Any = await api.crews(); setCrews(cs); setActiveCrewId(r.crewId); tab("home"); showToast("크루에 참여했어요"); } catch (e: Any) { showToast(e.message); } };
+  const joinByCode = async () => { if (!joinCode.trim()) { showToast("초대 코드를 입력해주세요"); return; } if (busy) return; setBusy(true); try { const r: Any = await api.post("/api/crews/join", { inviteCode: joinCode }); const cs: Any = await api.crews(); setCrews(cs); setActiveCrewId(r.crewId); tab("home"); showToast("크루에 참여했어요"); } catch (e: Any) { showToast(e.message); } finally { setBusy(false); } };
   const handleReq = async (userId: string, name: string, ok: boolean) => { try { await api.patch(`/api/crews/${activeCrewId}/requests/${userId}`, { action: ok ? "approve" : "reject" }); showToast(ok ? `${name}님을 승인했어요` : `${name}님 신청을 거절했어요`); if (activeCrewId) reloadCrew(activeCrewId); } catch (e: Any) { showToast(e.message); } };
-  const switchCrew = (id: string) => { const c = crews.find((x) => x.id === id); setActiveCrewId(id); setMode("crew"); setSwitcherOpen(false); tab("home", { m: false }); showToast(`${c?.name ?? ""}(으)로 전환했어요`); };
-  const switchPersonal = () => { setMode("personal"); setSwitcherOpen(false); tab("home", { m: true }); showToast("나의 클라이밍으로 전환했어요"); };
+  const switchCrew = (id: string) => { const c = crews.find((x) => x.id === id); setActiveCrewId(id); setMode("crew"); setSelSettingId(null); setSelGym(null); setSwitcherOpen(false); tab("home", { m: false }); showToast(`${c?.name ?? ""}(으)로 전환했어요`); };
+  const switchPersonal = () => { setMode("personal"); setSelSettingId(null); setSelGym(null); setSwitcherOpen(false); tab("home", { m: true }); showToast("나의 클라이밍으로 전환했어요"); };
   // 즐겨찾기 ★ — 개인 모드의 홈 암장 역할. 낙관적 업데이트 후 서버 반영.
   const toggleFavorite = async (gymId: string, next: boolean) => {
     setMyGyms((gs) => gs.map((g: Any) => (g.id === gymId ? { ...g, isHome: next, isFavorite: next } : g)));
@@ -452,18 +485,19 @@ export default function ClimbCrewApp() {
   const addPersonalVisit = async () => {
     if (!recordGymId) { showToast("암장을 골라주세요"); return; }
     if (!recordDate) { showToast("날짜를 골라주세요"); return; }
+    if (busy) return; setBusy(true);
     try {
       await api.post("/api/me/visits", { gymId: recordGymId, date: new Date(`${recordDate}T12:00:00`).toISOString() });
       setRecordSheetOpen(false);
       showToast("기록을 추가했어요");
       reloadPersonal();
-    } catch (e: Any) { showToast(e.message); }
+    } catch (e: Any) { showToast(e.message); } finally { setBusy(false); }
   };
   const deletePersonalVisit = async (id: string) => {
     try { await api.del(`/api/me/visits/${id}`); showToast("기록을 삭제했어요"); reloadPersonal(); }
     catch (e: Any) { showToast(e.message); }
   };
-  const submitVote = async () => { if (!openPoll) return; const dIds = Object.keys(voteDates).filter((k) => voteDates[k]); const gIds = Object.keys(voteGyms).filter((k) => voteGyms[k]); try { await api.post(`/api/polls/${openPoll.id}/responses`, { dateOptionIds: dIds, gymOptionIds: gIds }); setVoteSubmitted(true); showToast(dIds.length ? "응답을 제출했어요" : "다 가능으로 제출했어요"); if (activeCrewId) api.crewPolls(activeCrewId).then(setPolls); api.poll(openPoll.id).then((p: Any) => setPolls((prev) => prev.map((x) => (x.id === p.id ? { ...x, ...p } : x)))); } catch (e: Any) { showToast(e.message); } };
+  const submitVote = async () => { if (!openPoll || busy) return; setBusy(true); const dIds = Object.keys(voteDates).filter((k) => voteDates[k]); const gIds = Object.keys(voteGyms).filter((k) => voteGyms[k]); try { await api.post(`/api/polls/${openPoll.id}/responses`, { dateOptionIds: dIds, gymOptionIds: gIds }); setVoteSubmitted(true); showToast(dIds.length ? "응답을 제출했어요" : "다 가능으로 제출했어요"); if (activeCrewId) api.crewPolls(activeCrewId).then(setPolls).catch(() => {}); api.poll(openPoll.id).then((p: Any) => setPolls((prev) => prev.map((x) => (x.id === p.id ? { ...x, ...p } : x)))).catch(() => {}); } catch (e: Any) { showToast(e.message); } finally { setBusy(false); } };
   const inviteLink = () => `${window.location.origin}/?invite=${crewDetail?.inviteCode ?? ""}`;
   const inviteText = () => `NewSetter · '${crewDetail?.name ?? "우리 크루"}' 크루에 초대합니다!\n초대 코드: ${crewDetail?.inviteCode ?? ""}`;
   const copyLink = async () => { try { await navigator.clipboard.writeText(`${inviteText()}\n${inviteLink()}`); showToast("초대 링크를 복사했어요"); } catch { showToast("복사에 실패했어요"); } };
@@ -486,7 +520,8 @@ export default function ClimbCrewApp() {
   // 방문/일정 추가 — 실수 탭 방지를 위해 날짜 확인 시트를 거침
   const openVisitSheet = () => { const t = new Date(); setVisitDate(`${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, "0")}-${String(t.getDate()).padStart(2, "0")}`); setVisitSheetOpen(true); };
   const recordVisit = async () => {
-    if (!selGym || !visitDate) return;
+    if (!selGym || !visitDate || busy) return;
+    setBusy(true);
     const iso = new Date(`${visitDate}T12:00:00`).toISOString();
     try {
       if (mode === "personal") {
@@ -503,8 +538,8 @@ export default function ClimbCrewApp() {
         api.crewVisits(activeCrewId).then(setVisits);
         api.crewGyms(activeCrewId).then(setCrewGyms);
       }
-      if (selGym) api.gym(selGym, activeCrewId || undefined).then(setGymDetail);
-    } catch (e: Any) { showToast(e.message); }
+      if (selGym) api.gym(selGym, activeCrewId || undefined).then(setGymDetail).catch(() => {});
+    } catch (e: Any) { showToast(e.message); } finally { setBusy(false); }
   };
 
   // 일정(방문) 참여/취소/변경 — #2,#3,#4
@@ -577,13 +612,14 @@ export default function ClimbCrewApp() {
   const toggleReviewTag = (t: string) => setReviewTags((ts) => (ts.includes(t) ? ts.filter((x) => x !== t) : [...ts, t]));
   const submitReview = async () => {
     if (!selGym || !reviewRating) { showToast("별점을 매겨주세요"); return; }
+    if (busy) return; setBusy(true);
     try {
-      await api.post(`/api/gyms/${selGym}/reviews`, { rating: reviewRating, tags: reviewTags, content: reviewText || undefined, gymSettingId: gymDetail?.settings?.[0]?.id, crewId: activeCrewId });
+      await api.post(`/api/gyms/${selGym}/reviews`, { rating: reviewRating, tags: reviewTags, content: reviewText || undefined, gymSettingId: gymDetail?.settings?.[0]?.id ?? undefined, crewId: activeCrewId || undefined });
       setReviewSheetOpen(false);
-      api.gymReviews(selGym).then(setGymReviews);
-      api.gym(selGym, activeCrewId || undefined).then(setGymDetail);
+      api.gymReviews(selGym).then(setGymReviews).catch(() => {});
+      api.gym(selGym, activeCrewId || undefined).then(setGymDetail).catch(() => {});
       showToast("리뷰를 등록했어요");
-    } catch (e: Any) { showToast(e.message); }
+    } catch (e: Any) { showToast(e.message); } finally { setBusy(false); }
   };
   // 투표 딥링크 — 받은 사람이 로그인 후 바로 해당 투표로 이동
   const pollShareUrl = (pollId?: string | null) => `${window.location.origin}/?s=vote${pollId ? `&poll=${pollId}` : ""}${activeCrewId ? `&crew=${activeCrewId}` : ""}`;
@@ -593,7 +629,7 @@ export default function ClimbCrewApp() {
     const url = pollShareUrl(sharePoll?.id);
     const w = window as Any;
     if (w.Kakao?.isInitialized?.() && w.Kakao.Share) {
-      try { w.Kakao.Share.sendDefault({ objectType: "feed", content: { title, description: text, imageUrl: url + "/brand/climbcrew-icon-512.png", link: { mobileWebUrl: url, webUrl: url } }, buttons: [{ title: "투표 참여하기", link: { mobileWebUrl: url, webUrl: url } }] }); return; } catch { /* fall through */ }
+      try { w.Kakao.Share.sendDefault({ objectType: "feed", content: { title, description: text, imageUrl: window.location.origin + "/brand/climbcrew-icon-512.png", link: { mobileWebUrl: url, webUrl: url } }, buttons: [{ title: "투표 참여하기", link: { mobileWebUrl: url, webUrl: url } }] }); return; } catch { /* fall through */ }
     }
     if ((navigator as Any).share) { try { await (navigator as Any).share({ title, text, url }); return; } catch { return; } }
     try { await navigator.clipboard.writeText(`${text} ${url}`); showToast("링크를 복사했어요"); } catch { showToast("공유를 지원하지 않는 브라우저예요"); }
@@ -605,26 +641,29 @@ export default function ClimbCrewApp() {
   const createPoll = async () => {
     if (!pollTitle.trim()) { showToast("제목을 입력해주세요"); return; }
     if (!pollRange.start) { showToast("날짜 범위를 골라주세요"); return; }
+    if (!pollGymIds.length) { showToast("암장 후보를 최소 한 곳 골라주세요"); return; }
+    if (busy) return; setBusy(true);
     const rangeStart = pollRange.start;
     const rangeEnd = pollRange.end ?? pollRange.start;
     const deadline = pollDeadlineDays == null ? undefined : new Date(Date.now() + pollDeadlineDays * 86400000).toISOString();
     try {
       const created: Any = await api.post(`/api/crews/${activeCrewId}/polls`, { title: pollTitle.trim(), rangeStart, rangeEnd, deadline, gymIds: pollGymIds });
-      if (activeCrewId) api.crewPolls(activeCrewId).then(setPolls);
+      if (activeCrewId) api.crewPolls(activeCrewId).then(setPolls).catch(() => {});
       setSharePoll({ title: pollTitle.trim(), id: created?.id });
       setShareSheetOpen(true);
       tab("home");
-    } catch (e: Any) { showToast(e.message); }
+    } catch (e: Any) { showToast(e.message); } finally { setBusy(false); }
   };
   const closePoll = async () => {
-    if (!openPoll) return;
+    if (!openPoll || busy) return;
+    setBusy(true);
     try {
       await api.post(`/api/polls/${openPoll.id}/close`, {});
       setCloseSheetOpen(false);
       showToast("투표를 확정했어요");
-      if (activeCrewId) { api.crewPolls(activeCrewId).then(setPolls); api.crewVisits(activeCrewId).then(setVisits); }
+      if (activeCrewId) { api.crewPolls(activeCrewId).then(setPolls).catch(() => {}); api.crewVisits(activeCrewId).then(setVisits).catch(() => {}); }
       tab("home");
-    } catch (e: Any) { showToast(e.message); }
+    } catch (e: Any) { showToast(e.message); } finally { setBusy(false); }
   };
 
   /* ===== 파생 / 어댑터 ===== */
@@ -760,7 +799,10 @@ export default function ClimbCrewApp() {
   // 암장 상세
   const sg = gymDetail ? { name: gymDetail.name, loc: gymDetail.address || "", rating: gymDetail.rating?.avg ?? 0, reviews: gymDetail.rating?.count ?? 0, weeks: gymDetail.recency?.weeksSinceVisit ?? null, ever: !!gymDetail.recency?.everVisited, due: !!gymDetail.recency?.dueForReset, cycle: gymDetail.resetCycleWeeks ?? 4, hasSet: !!(gymDetail.settings?.length), color: gymById(selGym)?.color || "#E24D3A", initial: (gymDetail.name || "?")[0], instagram: gymDetail.instagram, settingId: gymDetail.settings?.[0]?.id ?? null } : null;
   const curSettingId = gymDetail?.settings?.[0]?.id;
-  const reviewSets = (() => { if (!gymReviews.length) return []; const cur = gymReviews.filter((r) => r.gymSettingId === curSettingId); const prev = gymReviews.filter((r) => r.gymSettingId !== curSettingId); const pal = [{ bg: "#E6EEFB", c: "#2456B0" }, { bg: "#E4F5EC", c: "#3E7D2E" }, { bg: "#FBF0DA", c: "#B4432E" }]; const mk = (list: Any[]) => list.map((r, i) => ({ user: r.user.nickname, stars: "★".repeat(r.rating), text: r.content || "", date: rel(r.createdAt), ...pal[i % pal.length] })); const out: Any[] = []; if (cur.length) out.push({ header: "이번 세팅", items: mk(cur) }); if (prev.length) out.push({ header: "이전 세팅", items: mk(prev) }); return out; })();
+  const reviewSets = (() => { if (!gymReviews.length) return []; const pal = [{ bg: "#E6EEFB", c: "#2456B0" }, { bg: "#E4F5EC", c: "#3E7D2E" }, { bg: "#FBF0DA", c: "#B4432E" }]; const mk = (list: Any[]) => list.map((r, i) => ({ user: r.user.nickname, stars: "★".repeat(r.rating), text: r.content || "", date: rel(r.createdAt), ...pal[i % pal.length] })); const out: Any[] = [];
+    if (!curSettingId) { out.push({ header: "리뷰", items: mk(gymReviews) }); return out; } // 세팅 정보 없는 암장은 한 묶음
+    const cur = gymReviews.filter((r) => r.gymSettingId === curSettingId); const prev = gymReviews.filter((r) => r.gymSettingId !== curSettingId);
+    if (cur.length) out.push({ header: "이번 세팅", items: mk(cur) }); if (prev.length) out.push({ header: "이전 세팅", items: mk(prev) }); return out; })();
 
   // 문제 상세
   const pd = probDetail ? { color: probDetail.color, tag: tagOf(probDetail.label, probDetail.color), hex: HEX[probDetail.color] || "#999", feel: feelFromScore(probDetail.stats?.difficultyScore), send: probDetail.stats?.sendRate == null ? 0 : Math.round(probDetail.stats.sendRate * 100), honey: (probDetail.stats?.honeyRatio ?? 0) > 0, videos: probDetail.stats?.videoCount ?? 0, gymName: probDetail.gymSetting?.gym?.name || "" } : null;
@@ -875,11 +917,11 @@ export default function ClimbCrewApp() {
 
   // 하단 액션바 — 절대위치 대신 플렉스 흐름으로(콘텐츠 아래 고정, 어떤 화면 높이에서도 안 겹침)
   let bottomBar: ReactNode = null;
-  if (is("createPoll")) bottomBar = <button onClick={createPoll} style={{ width: "100%", height: 52, fontSize: 18, fontWeight: 700, ...crayonBtn(CRAYON.red, 0) }}>투표 만들기</button>;
+  if (is("createPoll")) bottomBar = <button onClick={createPoll} disabled={busy} style={{ width: "100%", height: 52, fontSize: 18, fontWeight: 700, ...crayonBtn(CRAYON.red, 0), opacity: busy ? 0.6 : 1 }}>{busy ? "만드는 중…" : "투표 만들기"}</button>;
   else if (is("record")) bottomBar = <button onClick={saveRecord} style={{ width: "100%", height: 52, fontSize: 18, fontWeight: 700, ...crayonBtn(CRAYON.red, 0) }}>완등 기록 저장</button>;
   else if (is("probDetail") && pd) bottomBar = <button onClick={() => showToast("완등 기록은 준비 중이에요 · 조금만 기다려주세요")} style={{ width: "100%", height: 52, fontSize: 18, fontWeight: 700, ...crayonBtn(CRAYON.red, 0), opacity: 0.55 }}>내 기록 남기기 <span style={{ fontSize: 13, fontWeight: 700 }}>(준비 중)</span></button>;
   else if (is("gymDetail") && sg) bottomBar = (<div style={{ display: "flex", gap: 10 }}><button onClick={openVisitSheet} style={{ flex: 1, height: 50, border: `2px solid ${INK}`, borderRadius: WOBS[1], background: "#FFFEFA", fontSize: 17, fontWeight: 700, cursor: "pointer" }}>방문 기록</button><button onClick={openReviewSheet} style={{ flex: 1.5, height: 50, fontSize: 17, fontWeight: 700, ...crayonBtn(CRAYON.red, 2) }}>리뷰 쓰기</button></div>);
-  else if (is("vote") && openVote) bottomBar = voteSubmitted ? (<div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}><div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 15, fontWeight: 700, color: "#3E7D2E" }}><svg width="20" height="20" viewBox="0 0 20 20"><circle cx="10" cy="10" r="9" fill="#6BBF59" /><path d="M5.5 10.2 8.5 13 14.5 6.5" stroke="#fff" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round" /></svg>응답을 제출했어요</div><button onClick={() => setVoteSubmitted(false)} style={{ height: 42, padding: "0 16px", border: `2px solid ${INK}`, borderRadius: WOBS[2], background: "#FFFEFA", fontSize: 16, fontWeight: 700, cursor: "pointer" }}>수정하기</button></div>) : (<button onClick={submitVote} style={{ width: "100%", height: 52, fontSize: 18, fontWeight: 700, ...crayonBtn(CRAYON.red, 0) }}>응답 제출</button>);
+  else if (is("vote") && openVote) bottomBar = voteSubmitted ? (<div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}><div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 15, fontWeight: 700, color: "#3E7D2E" }}><svg width="20" height="20" viewBox="0 0 20 20"><circle cx="10" cy="10" r="9" fill="#6BBF59" /><path d="M5.5 10.2 8.5 13 14.5 6.5" stroke="#fff" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round" /></svg>응답을 제출했어요</div><button onClick={() => setVoteSubmitted(false)} style={{ height: 42, padding: "0 16px", border: `2px solid ${INK}`, borderRadius: WOBS[2], background: "#FFFEFA", fontSize: 16, fontWeight: 700, cursor: "pointer" }}>수정하기</button></div>) : (<button onClick={submitVote} disabled={busy} style={{ width: "100%", height: 52, fontSize: 18, fontWeight: 700, ...crayonBtn(CRAYON.red, 0), opacity: busy ? 0.6 : 1 }}>{busy ? "제출 중…" : "응답 제출"}</button>);
 
   const loginGo = () => enterApp(crews);
 
@@ -896,7 +938,7 @@ export default function ClimbCrewApp() {
               <div style={{ height: 56 }} />
               <button onClick={kakaoEnabled ? () => signIn("kakao") : loginGo} style={{ width: "100%", height: 52, border: `2px solid ${INK}`, borderRadius: WOBS[0], background: "#FEE500", color: "#191600", fontSize: 17, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, transform: "rotate(-0.4deg)" }}><svg width="20" height="20" viewBox="0 0 20 20" fill="#191600"><path d="M10 3C5.6 3 2 5.8 2 9.3c0 2.2 1.5 4.2 3.8 5.3-.2.6-.7 2.4-.8 2.8 0 .2.1.3.3.2.2-.1 2.5-1.7 3.5-2.4.4 0 .8.1 1.2.1 4.4 0 8-2.8 8-6.3S14.4 3 10 3z" /></svg>카카오로 시작하기</button>
               <div style={{ fontSize: 12, color: "#514C44", marginTop: 16, textAlign: "center" }}>{kakaoEnabled ? "가입하면 이용약관 및 개인정보처리방침에 동의하게 됩니다." : "개발 모드 · devuser 로 로그인됩니다"}</div>
-              {kakaoEnabled && <div onClick={loginGo} style={{ fontSize: 12, color: "#514C44", marginTop: 10, textAlign: "center", cursor: "pointer", textDecoration: "underline" }}>개발자 모드로 계속</div>}
+              {!kakaoEnabled && <div onClick={loginGo} style={{ fontSize: 12, color: "#514C44", marginTop: 10, textAlign: "center", cursor: "pointer", textDecoration: "underline" }}>개발자 모드로 계속</div>}
             </div>
           )}
 
@@ -910,7 +952,7 @@ export default function ClimbCrewApp() {
               <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 8 }}>초대 코드로 참여</div>
               <div style={{ display: "flex", gap: 8 }}>
                 <input value={joinCode} onChange={(e) => setJoinCode(e.target.value.toUpperCase())} placeholder="예: CREW-8H2K" autoCapitalize="characters" style={{ flex: 1, height: 50, border: "2px solid #3A3633", borderRadius: 10, padding: "0 14px", fontSize: 15, background: "#fff", outline: "none", textTransform: "uppercase" }} />
-                <button onClick={joinByCode} style={{ height: 50, padding: "0 20px", fontSize: 17, fontWeight: 700, whiteSpace: "nowrap", ...crayonBtn("58,54,51", 2) }}>참여하기</button>
+                <button onClick={joinByCode} disabled={busy} style={{ height: 50, padding: "0 20px", fontSize: 17, fontWeight: 700, whiteSpace: "nowrap", ...crayonBtn("58,54,51", 2), opacity: busy ? 0.6 : 1 }}>참여하기</button>
               </div>
             </div>
           )}
@@ -1136,8 +1178,8 @@ export default function ClimbCrewApp() {
               )}
               {exploreView === "list" ? (
                 <div style={{ flex: 1, overflowY: "auto", minHeight: 0, padding: "2px 16px 16px", display: "flex", flexDirection: "column", gap: 10 }}>
-                  {exploreGyms.length === 0 && <div style={{ padding: 14, ...cardStyle, color: "#514C44", fontSize: 13 }}>{crewLoaded ? "조건에 맞는 암장이 없어요." : "불러오는 중이에요…"}</div>}
-                  {exploreGyms.map((g) => (
+                  {exploreGyms.length === 0 && <div style={{ padding: 14, ...cardStyle, color: "#514C44", fontSize: 13 }}>{viewLoaded ? "조건에 맞는 암장이 없어요." : "불러오는 중이에요…"}</div>}
+                  {exploreGyms.slice(0, 60).map((g) => (
                     <div key={g.id} onClick={() => openGym(g.id)} style={{ display: "flex", alignItems: "center", gap: 12, padding: 14, ...cardStyle, cursor: "pointer", flexShrink: 0 }}>
                       <div style={avatarStyle(g.color, 40)}>{g.name[0]}</div>
                       <div style={{ flex: 1, minWidth: 0 }}>
@@ -1166,7 +1208,7 @@ export default function ClimbCrewApp() {
                         <div style={{ fontSize: 13, color: "#514C44", marginTop: 2 }}>{mapSelGym.loc}{mapSelGym.rating ? ` · ★ ${mapSelGym.rating}` : ""}</div>
                         <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
                           <div style={{ display: "inline-flex", alignItems: "center", padding: "3px 9px", borderRadius: 999, fontSize: 12, fontWeight: 700, background: mapSelGym.due ? "#FBEFD9" : "#E4F5EC", color: mapSelGym.due ? "#B5730A" : "#3E7D2E" }}>{visitLabel(mapSelGym)}</div>
-                          <div style={{ fontSize: 12, fontWeight: 700, color: "#514C44" }}>{mapSelGym.lastVisit ? `마지막 방문 ${fmtDate(mapSelGym.lastVisit)}` : "우리 크루 방문 기록 없음"}</div>
+                          <div style={{ fontSize: 12, fontWeight: 700, color: "#514C44" }}>{mapSelGym.lastVisit ? `마지막 방문 ${fmtDate(mapSelGym.lastVisit)}` : (personal ? "내 방문 기록 없음" : "우리 크루 방문 기록 없음")}</div>
                         </div>
                       </div>
                       <div onClick={() => setMapSel(null)} style={{ cursor: "pointer", padding: 4, flexShrink: 0 }}><svg width="16" height="16" viewBox="0 0 14 14"><path d="M2 2l10 10M12 2 2 12" stroke="#514C44" strokeWidth="2" strokeLinecap="round" /></svg></div>
@@ -1205,7 +1247,8 @@ export default function ClimbCrewApp() {
                     </div>
                   )}
                 </div>
-                {!openVote && <div style={{ padding: "0 16px", color: "#514C44", fontSize: 14 }}>이 크루엔 진행 중인 투표가 없어요.</div>}
+                {!openVote && selectedPollMissing && <div style={{ padding: "0 16px", color: "#514C44", fontSize: 14 }}>이 투표는 마감됐거나 삭제됐어요. <span onClick={() => { setSelPollId(null); tab("home"); }} style={{ color: "#E24D3A", fontWeight: 700, cursor: "pointer" }}>홈으로</span></div>}
+                {!openVote && !selectedPollMissing && <div style={{ padding: "0 16px", color: "#514C44", fontSize: 14 }}>이 크루엔 진행 중인 투표가 없어요.</div>}
                 {openVote && (<>
                   {hasGymOpts && (
                     <div style={{ padding: "14px 16px 0" }}>
@@ -1250,6 +1293,12 @@ export default function ClimbCrewApp() {
             </>
           )}
 
+          {is("gymDetail") && !gymDetail && (
+            <div style={{ animation: "ccfade .3s ease" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "56px 12px 8px" }}><BackBtn onClick={back} /><div style={{ fontSize: 20, fontWeight: 700, color: "#8C857B" }}>불러오는 중…</div></div>
+              <div style={{ padding: "40px 16px", textAlign: "center", color: "#8C857B", fontSize: 15 }}>암장 정보를 가져오고 있어요</div>
+            </div>
+          )}
           {is("gymDetail") && sg && (
             <>
               <div style={{ animation: "ccfade .3s ease", paddingBottom: 24 }}>
@@ -1431,6 +1480,12 @@ export default function ClimbCrewApp() {
             </div>
           )}
 
+          {is("probDetail") && !probDetail && (
+            <div style={{ animation: "ccfade .3s ease" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "56px 12px 8px" }}><BackBtn onClick={back} /><div style={{ fontSize: 20, fontWeight: 700, color: "#8C857B" }}>불러오는 중…</div></div>
+              <div style={{ padding: "40px 16px", textAlign: "center", color: "#8C857B", fontSize: 15 }}>문제 정보를 가져오고 있어요</div>
+            </div>
+          )}
           {is("probDetail") && pd && (
             <>
               <div style={{ animation: "ccfade .3s ease", paddingBottom: 24 }}>
@@ -1653,7 +1708,7 @@ export default function ClimbCrewApp() {
                 <div style={{ fontSize: 15, fontWeight: 700, marginTop: 4, color: closeWinGym ? INK : "#514C44" }}>{closeWinGym ? <>{closeWinGym.name} <span style={{ fontSize: 13, color: "#514C44" }}>· 선호 {closeWinGym.count}표</span></> : "암장 후보 없음 · 날짜만 확정돼요"}</div>
                 <div style={{ marginTop: 8, fontSize: 12, color: "#514C44", lineHeight: 1.45 }}>X 하지 않은 크루원은 자동으로 참석 처리돼요.{respondedCount === 0 ? <b style={{ color: "#B4432E" }}> 아직 아무도 응답하지 않았어요 — 가장 이른 날짜로 확정돼요.</b> : null}</div>
               </div>
-              <button onClick={closePoll} style={{ width: "100%", height: 52, fontSize: 18, fontWeight: 700, ...crayonBtn(CRAYON.red, 0) }}>마감하고 확정</button>
+              <button onClick={closePoll} disabled={busy} style={{ width: "100%", height: 52, fontSize: 18, fontWeight: 700, ...crayonBtn(CRAYON.red, 0), opacity: busy ? 0.6 : 1 }}>{busy ? "확정 중…" : "마감하고 확정"}</button>
               <button onClick={() => setCloseSheetOpen(false)} style={{ width: "100%", height: 46, marginTop: 8, border: `2px solid ${INK}`, borderRadius: WOBS[2], background: "#FFFEFA", fontSize: 16, fontWeight: 700, cursor: "pointer" }}>취소</button>
             </div>
           </>
@@ -1679,7 +1734,7 @@ export default function ClimbCrewApp() {
               <div style={{ fontSize: 13, color: "#514C44", margin: "0 4px 14px" }}>{sg?.name ?? ""} · {personal ? "내 기록에 추가돼요 (크루와 무관)" : "크루 전체 일정에 추가돼요"}</div>
               <div style={{ fontSize: 13, fontWeight: 700, color: "#514C44", margin: "0 4px 8px" }}>언제 갔어요?</div>
               <input type="date" value={visitDate} onChange={(e) => setVisitDate(e.target.value)} style={{ width: "100%", height: 50, border: "2px solid #3A3633", borderRadius: 10, padding: "0 14px", fontSize: 15, background: "#fff", outline: "none", marginBottom: 14 }} />
-              <button onClick={recordVisit} style={{ width: "100%", height: 52, fontSize: 18, fontWeight: 700, ...crayonBtn(CRAYON.red, 0) }}>방문 기록 추가</button>
+              <button onClick={recordVisit} disabled={busy} style={{ width: "100%", height: 52, fontSize: 18, fontWeight: 700, ...crayonBtn(CRAYON.red, 0), opacity: busy ? 0.6 : 1 }}>방문 기록 추가</button>
               <button onClick={() => setVisitSheetOpen(false)} style={{ width: "100%", height: 46, marginTop: 8, border: `2px solid ${INK}`, borderRadius: WOBS[2], background: "#FFFEFA", fontSize: 16, fontWeight: 700, cursor: "pointer" }}>취소</button>
             </div>
           </>
@@ -1786,7 +1841,7 @@ export default function ClimbCrewApp() {
                 {REVIEW_TAGS.map((t, ti) => { const on = reviewTags.includes(t); return (<div key={t} onClick={() => toggleReviewTag(t)} style={{ padding: "5px 12px", borderRadius: WOBS[ti % 4], fontSize: 15, fontWeight: 700, cursor: "pointer", border: on ? `2px solid ${INK}` : "2px dashed rgba(58,54,51,0.3)", background: on ? HILITE : "#FFFEFA", color: on ? INK : "#514C44", transform: ti % 2 ? "rotate(0.6deg)" : "rotate(-0.6deg)" }}>{t}</div>); })}
               </div>
               <textarea value={reviewText} onChange={(e) => setReviewText(e.target.value)} placeholder="이번 셋 어땠어요? (예: 파랑 볼륨 꿀잼, 주말 저녁 붐빔)" style={{ width: "100%", height: 90, border: "2px solid #3A3633", borderRadius: 10, padding: "12px 14px", fontSize: 14, background: "#FFFDF6", outline: "none", resize: "none", lineHeight: 1.5, marginBottom: 14 }} />
-              <button onClick={submitReview} style={{ width: "100%", height: 52, fontSize: 18, fontWeight: 700, ...crayonBtn(CRAYON.red, 0) }}>등록</button>
+              <button onClick={submitReview} disabled={busy} style={{ width: "100%", height: 52, fontSize: 18, fontWeight: 700, ...crayonBtn(CRAYON.red, 0), opacity: busy ? 0.6 : 1 }}>등록</button>
             </div>
           </>
         )}

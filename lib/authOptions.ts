@@ -9,6 +9,8 @@ export const authOptions: NextAuthOptions = {
       clientSecret: process.env.KAKAO_CLIENT_SECRET ?? "",
     }),
   ],
+  // 카카오 취소/실패 시 next-auth 기본 영어 페이지 대신 앱(/)으로 돌려보냄. 앱이 ?error= 를 읽어 안내.
+  pages: { signIn: "/", error: "/" },
   session: { strategy: "jwt" },
   callbacks: {
     // 카카오 로그인 시 User 레코드를 upsert 하고 우리 내부 id를 토큰에 심는다.

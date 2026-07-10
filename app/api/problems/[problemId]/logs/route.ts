@@ -5,6 +5,8 @@ import { json, unauthorized, notFound, parseBody } from "@/lib/http";
 
 // 문제의 완등 로그 목록 (영상 피드 + 베타)
 export async function GET(_req: Request, { params }: { params: Promise<{ problemId: string }> }) {
+  const userId = await getCurrentUserId();
+  if (!userId) return unauthorized();
   const { problemId } = await params;
   const logs = await prisma.climbLog.findMany({
     where: { problemId },
@@ -16,7 +18,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ problem
 
 const schema = z.object({
   sent: z.boolean().default(false),
-  attempts: z.number().int().min(0).optional(),
+  attempts: z.number().int().min(0).max(9999).optional(),
   relativeFeel: z.enum(["EASIER", "AS_EXPECTED", "HARDER"]).optional(),
   honey: z.boolean().default(false),
   content: z.string().max(1000).optional(),
