@@ -3,6 +3,8 @@ import { prisma } from "@/lib/prisma";
 import { getCurrentUserId } from "@/lib/auth";
 import { json, error, unauthorized, notFound, parseBody } from "@/lib/http";
 import { getApprovedMembership } from "@/lib/crew";
+import { rateLimit } from "@/lib/ratelimit";
+import { tooMany } from "@/lib/http";
 
 // 암장 리뷰 목록 (?settingId= 로 특정 세팅 회차 리뷰만) — 로그인 필요(리뷰어 프로필 노출)
 export async function GET(req: Request, { params }: { params: Promise<{ gymId: string }> }) {
@@ -35,6 +37,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ gymId: 
   if (!userId) return unauthorized();
   const { gymId } = await params;
 
+  if (!rateLimit(`review:${userId}`, 30, 3600_000)) return tooMany();
   const gym = await prisma.gym.findUnique({ where: { id: gymId }, select: { id: true } });
   if (!gym) return notFound("암장");
 

@@ -66,3 +66,20 @@ export async function PATCH(req: Request) {
   });
   return json(user);
 }
+
+// 회원 탈퇴 — 내 계정과 관련 데이터 삭제.
+export async function DELETE() {
+  const userId = await getCurrentUserId();
+  if (!userId) return unauthorized();
+
+  await prisma.$transaction(async (tx) => {
+    // 내가 크루장인 크루 통째 삭제(멤버·투표·방문·홈짐 cascade). 크루장 위임 대신 삭제.
+    await tx.crew.deleteMany({ where: { leaderId: userId } });
+    // 다른 크루에서 내가 만든 투표 삭제(creatorId FK).
+    await tx.poll.deleteMany({ where: { creatorId: userId } });
+    // 나머지(멤버십·표·리뷰·완등로그·즐겨찾기·푸시·색보정·응답·참석)는 User cascade,
+    // 내가 만든 방문/제보한 세팅/등록한 문제는 SetNull 로 보존.
+    await tx.user.delete({ where: { id: userId } });
+  });
+  return json({ ok: true });
+}

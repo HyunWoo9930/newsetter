@@ -2,7 +2,8 @@ import { z } from "zod";
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { getCurrentUserId } from "@/lib/auth";
-import { json, error, unauthorized, parseBody, generateInviteCode } from "@/lib/http";
+import { json, error, unauthorized, tooMany, parseBody, generateInviteCode } from "@/lib/http";
+import { rateLimit } from "@/lib/ratelimit";
 
 const createSchema = z.object({
   name: z.string().min(1, "크루 이름을 입력해주세요").max(40),
@@ -16,6 +17,7 @@ const createSchema = z.object({
 export async function POST(req: Request) {
   const userId = await getCurrentUserId();
   if (!userId) return unauthorized();
+  if (!rateLimit(`crew:create:${userId}`, 10, 3600_000)) return tooMany("크루를 너무 많이 만들었어요. 잠시 후 다시 시도해주세요");
 
   const parsed = await parseBody(req, createSchema);
   if (!parsed.ok) return parsed.response;

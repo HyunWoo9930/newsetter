@@ -1,7 +1,8 @@
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { getCurrentUserId } from "@/lib/auth";
-import { json, error, unauthorized, forbidden, parseBody } from "@/lib/http";
+import { json, error, unauthorized, forbidden, tooMany, parseBody } from "@/lib/http";
+import { rateLimit } from "@/lib/ratelimit";
 import { getApprovedMembership } from "@/lib/crew";
 import { emitCrew } from "@/lib/events";
 
@@ -26,6 +27,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ crewId:
   const { crewId } = await params;
 
   if (!(await getApprovedMembership(crewId, userId))) return forbidden();
+  if (!rateLimit(`poll:create:${userId}`, 30, 3600_000)) return tooMany();
 
   const parsed = await parseBody(req, createSchema);
   if (!parsed.ok) return parsed.response;

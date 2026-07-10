@@ -549,6 +549,16 @@ export default function ClimbCrewApp() {
   const openVisitEdit = (v: Any) => { setVisitEdit(v); setVisitEditDate(String(v.date).slice(0, 10)); setVisitEditGymId(v.gym?.id ?? null); setVisitEditGymQ(""); };
   const saveVisitEdit = async () => { if (!visitEdit) return; if (!visitEditDate) { showToast("날짜를 골라주세요"); return; } try { await api.visitUpdate(visitEdit.id, { date: visitEditDate, gymId: visitEditGymId || undefined }); setVisitEdit(null); reloadVisits(); showToast("일정을 변경했어요"); } catch (e: Any) { showToast(e.message); } };
   const openVisitDetail = (v: Any) => setDetailVisitId(v.id);
+  const deleteAccount = async () => {
+    if (typeof window !== "undefined" && !window.confirm("정말 탈퇴할까요?\n\n내 계정과 함께,\n· 내가 만든 크루(그 크루의 일정·투표 포함)\n· 내가 만든 투표\n· 내 기록·리뷰·즐겨찾기\n가 모두 삭제되고 되돌릴 수 없어요.")) return;
+    if (busy) return; setBusy(true);
+    try {
+      await api.deleteAccount();
+      showToast("탈퇴가 완료됐어요. 그동안 감사했어요");
+      if (status === "authenticated") await signOut({ redirect: false });
+      setCrews([]); setActiveCrewId(null); setCrewDetail(null); setPolls([]); setVisits([]); setMyGyms([]); setMyVisits([]); setMe(null); setMode("crew"); tab("login");
+    } catch (e: Any) { showToast(e.message); } finally { setBusy(false); }
+  };
 
   const openCreatePoll = () => { setPollTitle(""); setPollRange({ start: null, end: null }); setPollDeadlineDays(5); setPollGymIds([]); setPickedDay(null); setPollCalOffset(0); setGymSearch(""); go("createPoll"); };
   // 범위 선택: 첫 탭=시작, 둘째 탭=끝(시작보다 빠르면 시작을 다시 잡음). 이미 범위가 있으면 새로 시작.
@@ -1378,7 +1388,8 @@ export default function ClimbCrewApp() {
                 <div onClick={() => showToast("알림 설정은 준비 중이에요")} style={{ display: "flex", alignItems: "center", gap: 8, padding: "15px 16px", borderBottom: "2px dashed rgba(58,54,51,0.2)", cursor: "pointer" }}><div style={{ flex: 1, fontSize: 15, color: "#514C44" }}>알림 설정</div><div style={{ fontSize: 11, fontWeight: 700, color: "#514C44", background: "#F3EEDF", padding: "3px 9px", borderRadius: 999 }}>준비 중</div></div>
                 {crews.length > 0 && <div onClick={openCrewManage} style={{ display: "flex", alignItems: "center", gap: 8, padding: "15px 16px", borderBottom: "2px dashed rgba(58,54,51,0.2)", cursor: "pointer" }}><svg width="19" height="19" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="3" stroke={INK} strokeWidth="1.8" /><path d="M12 3.5v2M12 18.5v2M3.5 12h2M18.5 12h2M6 6l1.4 1.4M16.6 16.6 18 18M18 6l-1.4 1.4M7.4 16.6 6 18" stroke={INK} strokeWidth="1.8" strokeLinecap="round" /></svg><div style={{ flex: 1, fontSize: 15, fontWeight: 700 }}>크루 관리</div><div style={{ fontSize: 12, color: "#514C44" }}>멤버 · 초대 · 홈 암장</div><ChevR /></div>}
                 {crews.length === 0 && <div onClick={() => go("start")} style={{ display: "flex", alignItems: "center", gap: 8, padding: "15px 16px", borderBottom: "2px dashed rgba(58,54,51,0.2)", cursor: "pointer" }}><div style={{ flex: 1, fontSize: 15, fontWeight: 700 }}>크루 시작하기</div><div style={{ fontSize: 12, color: "#514C44" }}>만들기 · 초대 코드 참여</div><ChevR /></div>}
-                <div onClick={async () => { if (status === "authenticated") await signOut({ redirect: false }); setCrews([]); setActiveCrewId(null); tab("login"); }} style={{ display: "flex", alignItems: "center", padding: "15px 16px", cursor: "pointer" }}><div style={{ flex: 1, fontSize: 15, color: "#D14343" }}>로그아웃</div></div>
+                <div onClick={async () => { if (status === "authenticated") await signOut({ redirect: false }); setCrews([]); setActiveCrewId(null); tab("login"); }} style={{ display: "flex", alignItems: "center", padding: "15px 16px", cursor: "pointer", borderBottom: "2px dashed rgba(58,54,51,0.2)" }}><div style={{ flex: 1, fontSize: 15, color: "#D14343" }}>로그아웃</div></div>
+                <div onClick={deleteAccount} style={{ display: "flex", alignItems: "center", padding: "15px 16px", cursor: "pointer" }}><div style={{ flex: 1, fontSize: 13, color: "#8C857B" }}>회원 탈퇴</div><ChevR /></div>
               </div></div>
             </div>
           )}

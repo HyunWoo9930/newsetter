@@ -150,7 +150,7 @@ model GymSetting {
   createdAt    DateTime @default(now())
 
   gym        Gym       @relation(fields: [gymId], references: [id], onDelete: Cascade)
-  reportedBy User?     @relation("SettingReporter", fields: [reportedById], references: [id])
+  reportedBy User?     @relation("SettingReporter", fields: [reportedById], references: [id], onDelete: SetNull)
   visits     Visit[]
   reviews    Review[]
   problems   Problem[]
@@ -171,7 +171,7 @@ model Visit {
   crew       Crew?           @relation(fields: [crewId], references: [id], onDelete: Cascade)
   gym        Gym             @relation(fields: [gymId], references: [id], onDelete: Cascade)
   gymSetting GymSetting?     @relation(fields: [gymSettingId], references: [id])
-  createdBy  User?           @relation("VisitCreator", fields: [createdById], references: [id])
+  createdBy  User?           @relation("VisitCreator", fields: [createdById], references: [id], onDelete: SetNull)
   attendees  VisitAttendee[]
 
   @@index([crewId, gymId, date])
@@ -334,7 +334,7 @@ model Problem {
   createdAt    DateTime @default(now())
 
   gymSetting GymSetting @relation(fields: [gymSettingId], references: [id], onDelete: Cascade)
-  createdBy  User?      @relation("ProblemCreator", fields: [createdById], references: [id])
+  createdBy  User?      @relation("ProblemCreator", fields: [createdById], references: [id], onDelete: SetNull)
   logs       ClimbLog[]
 
   @@index([gymSettingId, color])

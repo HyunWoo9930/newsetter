@@ -40,6 +40,8 @@ export const api = {
   recommendations: (settingId: string, growth: boolean) =>
     nf(`/api/gym-settings/${settingId}/recommendations${growth ? "?growth=1" : ""}`).then(j),
 
+  deleteAccount: () => nf("/api/me", { method: "DELETE" }).then(j),
+
   // 개인 모드 — 내 암장/기록/즐겨찾기
   meGyms: () => nf("/api/me/gyms", noStore).then(j),
   meVisits: () => nf("/api/me/visits", noStore).then(j),
