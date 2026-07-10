@@ -52,9 +52,12 @@ jobs:
       - name: Push DB schema
         run: |
           cd "$APP_DIR"
+          pkill -f "port-forward svc/setter-db" 2>/dev/null || true
+          sleep 1
           kubectl -n setter port-forward svc/setter-db 5432:5432 >/tmp/ci-pf.log 2>&1 &
           PF=$!
-          sleep 5
+          # 포트가 실제로 열릴 때까지 최대 30초 대기 (고정 sleep 대신)
+          for i in $(seq 1 30); do (exec 3<>/dev/tcp/localhost/5432) 2>/dev/null && { exec 3>&- 3<&-; break; }; sleep 1; done
           npx prisma db push --skip-generate --accept-data-loss
           kill "$PF" 2>/dev/null || true
 
