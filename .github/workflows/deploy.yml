@@ -52,14 +52,11 @@ jobs:
       - name: Push DB schema
         run: |
           cd "$APP_DIR"
-          pkill -f "port-forward svc/setter-db" 2>/dev/null || true
-          sleep 1
-          kubectl -n setter port-forward svc/setter-db 5432:5432 >/tmp/ci-pf.log 2>&1 &
-          PF=$!
-          # 포트가 실제로 열릴 때까지 최대 30초 대기 (고정 sleep 대신)
-          for i in $(seq 1 30); do (exec 3<>/dev/tcp/localhost/5432) 2>/dev/null && { exec 3>&- 3<&-; break; }; sleep 1; done
-          npx prisma db push --skip-generate --accept-data-loss
-          kill "$PF" 2>/dev/null || true
+          # 인클러스터 setter-db 로 직접 push (port-forward 는 CI 에서 불안정 → 파드 내부 exec).
+          # 파드는 hostPath 로 /app(=$APP_DIR)을 마운트하므로 방금 git reset 한 스키마·node_modules 를 그대로 사용.
+          POD=$(kubectl -n setter get pods -l app=setter -o jsonpath='{.items[?(@.status.phase=="Running")].metadata.name}' | tr ' ' '\n' | head -1)
+          if [ -z "$POD" ]; then echo "no running setter pod — skip (next deploy applies)"; exit 0; fi
+          kubectl -n setter exec "$POD" -- sh -c 'cd /app && DATABASE_URL="postgresql://climbcrew:climbcrew@setter-db:5432/climbcrew?schema=public" npx prisma db push --skip-generate --accept-data-loss'
 
       - name: Build
         run: cd "$APP_DIR" && NODE_OPTIONS=--max-old-space-size=2048 npm run build
