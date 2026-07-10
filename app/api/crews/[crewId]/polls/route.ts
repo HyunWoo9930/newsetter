@@ -5,6 +5,7 @@ import { json, error, unauthorized, forbidden, tooMany, parseBody } from "@/lib/
 import { rateLimit } from "@/lib/ratelimit";
 import { getApprovedMembership } from "@/lib/crew";
 import { emitCrew } from "@/lib/events";
+import { logEvent } from "@/lib/activity";
 
 // 날짜는 YYYY-MM-DD 로 받아 UTC 자정으로 고정 (타임존 밀림 방지)
 const dayStr = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "날짜 형식이 올바르지 않아요");
@@ -61,6 +62,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ crewId:
     include: { dateOptions: true, gymOptions: { include: { gym: true } } },
   });
   emitCrew(crewId, { type: "poll_created", pollId: poll.id, title: poll.title, userId });
+  await logEvent("poll_create", { userId, req, meta: { crewId, pollId: poll.id, title: poll.title } });
   return json(poll, 201);
 }
 

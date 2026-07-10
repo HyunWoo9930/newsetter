@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import { getCurrentUserId } from "@/lib/auth";
 import { json, error, unauthorized, notFound } from "@/lib/http";
+import { logEvent } from "@/lib/activity";
 
 // 크루 탈퇴.
 // - 일반 멤버: 즉시 탈퇴
@@ -21,9 +22,11 @@ export async function POST(_req: Request, { params }: { params: Promise<{ crewId
     });
     if (others > 0) return error("크루장은 다른 멤버가 있는 동안 탈퇴할 수 없어요", 409);
     await prisma.crew.delete({ where: { id: crewId } });
+    await logEvent("crew_leave", { userId, req: _req, meta: { crewId, crewDeleted: true } });
     return json({ ok: true, crewDeleted: true });
   }
 
   await prisma.crewMember.delete({ where: { id: membership.id } });
+  await logEvent("crew_leave", { userId, req: _req, meta: { crewId, crewDeleted: false } });
   return json({ ok: true, crewDeleted: false });
 }

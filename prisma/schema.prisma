@@ -68,6 +68,10 @@ model User {
   createdVisits   Visit[]            @relation("VisitCreator")
   visitAttendance VisitAttendee[]
   pollResponses   PollResponse[]
+  events          ActivityEvent[]
+
+  // 마지막 활동 시각(로그인·행동 시 갱신). 이탈(휴면) 판단용.
+  lastSeenAt      DateTime?
 }
 
 model Crew {
@@ -376,4 +380,21 @@ model ColorGradeVote {
 
   @@unique([gymId, color, userId])
   @@index([gymId, color])
+}
+
+// 사용자 행동 로그. 누가 언제 무엇을 했는지 남겨 이탈 퍼널·활동 분석에 사용.
+// userId 는 nullable + SetNull → 탈퇴 후에도 이탈/분석 데이터를 보존.
+model ActivityEvent {
+  id        String   @id @default(cuid())
+  userId    String?
+  type      String // login, signup, crew_create, poll_vote, visit_join ... (lib/activity.ts EventType)
+  meta      Json? // { crewId, pollId, gymId, name ... }
+  ip        String?
+  createdAt DateTime @default(now())
+
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([type, createdAt])
+  @@index([userId, createdAt])
+  @@index([createdAt])
 }

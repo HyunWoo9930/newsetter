@@ -1,6 +1,7 @@
 import type { NextAuthOptions } from "next-auth";
 import KakaoProvider from "next-auth/providers/kakao";
 import { prisma } from "@/lib/prisma";
+import { logEvent } from "@/lib/activity";
 
 export const authOptions: NextAuthOptions = {
   providers: [
@@ -20,6 +21,8 @@ export const authOptions: NextAuthOptions = {
         const kakaoProfile = profile as {
           properties?: { nickname?: string; profile_image?: string };
         };
+        // 신규 가입인지(=이 kakaoId 가 처음인지) 판별해 signup/login 을 구분 기록.
+        const existing = await prisma.user.findUnique({ where: { kakaoId }, select: { id: true } });
         const user = await prisma.user.upsert({
           where: { kakaoId },
           update: {},
@@ -30,6 +33,10 @@ export const authOptions: NextAuthOptions = {
           },
         });
         token.userId = user.id;
+        await logEvent(existing ? "login" : "signup", {
+          userId: user.id,
+          meta: { nickname: kakaoProfile.properties?.nickname ?? "클라이머" },
+        });
       }
       return token;
     },

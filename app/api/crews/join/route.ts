@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { getCurrentUserId } from "@/lib/auth";
 import { json, error, unauthorized, tooMany, parseBody } from "@/lib/http";
 import { rateLimit, clientIp } from "@/lib/ratelimit";
+import { logEvent } from "@/lib/activity";
 
 const schema = z.object({
   inviteCode: z.string().min(1, "초대 코드를 입력해주세요"),
@@ -41,11 +42,13 @@ export async function POST(req: Request) {
       where: { id: existing.id },
       data: { status: "APPROVED", joinedVia: "INVITE_LINK" },
     });
+    await logEvent("crew_join", { userId, req, meta: { crewId: crew.id, name: crew.name } });
     return json({ crewId: crew.id, membership: updated });
   }
 
   const membership = await prisma.crewMember.create({
     data: { crewId: crew.id, userId, role: "MEMBER", status: "APPROVED", joinedVia: "INVITE_LINK" },
   });
+  await logEvent("crew_join", { userId, req, meta: { crewId: crew.id, name: crew.name } });
   return json({ crewId: crew.id, membership }, 201);
 }

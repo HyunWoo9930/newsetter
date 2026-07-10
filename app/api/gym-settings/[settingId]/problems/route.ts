@@ -4,6 +4,7 @@ import { getCurrentUserId } from "@/lib/auth";
 import { json, unauthorized, notFound, parseBody } from "@/lib/http";
 import { getColorVGradeMap } from "@/lib/colorGrade";
 import { problemDifficultyScore, sendRate, honeyRatio, type LogSignal } from "@/lib/difficulty";
+import { logEvent } from "@/lib/activity";
 
 // 세팅 회차의 문제 목록. 색(난이도)별로 묶고, 색 안에서 "쉬운 순" 정렬.
 export async function GET(_req: Request, { params }: { params: Promise<{ settingId: string }> }) {
@@ -104,5 +105,6 @@ export async function POST(req: Request, { params }: { params: Promise<{ setting
       createdById: userId,
     },
   });
+  await logEvent("problem_create", { userId, req, meta: { settingId, problemId: problem.id, color: problem.color } });
   return json(problem, 201);
 }

@@ -4,6 +4,7 @@ import { json, error, unauthorized, forbidden, notFound } from "@/lib/http";
 import { getApprovedMembership } from "@/lib/crew";
 import { settingIdForVisit } from "@/lib/gym";
 import { emitCrew } from "@/lib/events";
+import { logEvent } from "@/lib/activity";
 
 // 투표 마감 → 최소 불가표(날짜) + 최다 선호(암장) 확정 → 방문(일정) 자동 생성.
 // 투표를 만든 사람만 마감 가능.
@@ -70,5 +71,6 @@ export async function POST(_req: Request, { params }: { params: Promise<{ pollId
   if (result.raced) return error("이미 마감된 투표입니다", 409);
 
   emitCrew(poll.crewId, { type: "poll_closed", pollId, title: poll.title, visitId: result.visit?.id ?? null, userId });
+  await logEvent("poll_close", { userId, req: _req, meta: { pollId, crewId: poll.crewId, title: poll.title, visitId: result.visit?.id ?? null } });
   return json({ ok: true, confirmedDate: winnerDate.date, confirmedGymId: winnerGym?.gymId ?? null, visit: result.visit });
 }

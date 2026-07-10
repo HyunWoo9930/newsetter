@@ -4,6 +4,7 @@ import { getCurrentUserId } from "@/lib/auth";
 import { json, error, unauthorized, forbidden, notFound, parseBody } from "@/lib/http";
 import { getApprovedMembership } from "@/lib/crew";
 import { emitCrew } from "@/lib/events";
+import { logEvent } from "@/lib/activity";
 
 const schema = z.object({
   dateOptionIds: z.array(z.string()).max(100).default([]),
@@ -55,5 +56,6 @@ export async function POST(req: Request, { params }: { params: Promise<{ pollId:
   ]);
 
   emitCrew(poll.crewId, { type: "vote_submitted", pollId, userId });
+  await logEvent("poll_vote", { userId, req, meta: { pollId, crewId: poll.crewId } });
   return json({ ok: true, dateOptionIds, gymOptionIds, responded: true });
 }

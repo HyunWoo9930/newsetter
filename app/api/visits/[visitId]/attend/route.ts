@@ -4,6 +4,7 @@ import { getCurrentUserId } from "@/lib/auth";
 import { json, error, unauthorized, forbidden, notFound, parseBody } from "@/lib/http";
 import { getApprovedMembership } from "@/lib/crew";
 import { emitCrew } from "@/lib/events";
+import { logEvent } from "@/lib/activity";
 
 const schema = z.object({ going: z.boolean() });
 
@@ -38,5 +39,6 @@ export async function PUT(req: Request, { params }: { params: Promise<{ visitId:
 
   const count = await prisma.visitAttendee.count({ where: { visitId } });
   emitCrew(crewId, { type: "visit_attend", visitId, userId, going: parsed.data.going });
+  await logEvent(parsed.data.going ? "visit_join" : "visit_leave", { userId, req, meta: { visitId, crewId } });
   return json({ ok: true, mine: parsed.data.going, attendeeCount: count });
 }

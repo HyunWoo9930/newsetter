@@ -2,6 +2,7 @@ import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { getCurrentUserId } from "@/lib/auth";
 import { json, unauthorized, notFound, parseBody } from "@/lib/http";
+import { logEvent } from "@/lib/activity";
 
 const schema = z.object({ favorite: z.boolean() });
 
@@ -26,5 +27,6 @@ export async function PUT(req: Request, { params }: { params: Promise<{ gymId: s
   } else {
     await prisma.gymFavorite.deleteMany({ where: { userId, gymId } });
   }
+  if (parsed.data.favorite) await logEvent("gym_favorite", { userId, req, meta: { gymId } });
   return json({ favorite: parsed.data.favorite });
 }

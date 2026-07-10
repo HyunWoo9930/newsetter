@@ -5,6 +5,7 @@ import { json, unauthorized, forbidden, notFound, parseBody } from "@/lib/http";
 import { getApprovedMembership } from "@/lib/crew";
 import { settingIdForVisit } from "@/lib/gym";
 import { emitCrew } from "@/lib/events";
+import { logEvent } from "@/lib/activity";
 
 // 크루 클라이밍 일정 목록 (캘린더용) — 참석자 + 내가 가는지 포함
 export async function GET(_req: Request, { params }: { params: Promise<{ crewId: string }> }) {
@@ -66,5 +67,6 @@ export async function POST(req: Request, { params }: { params: Promise<{ crewId:
   });
 
   emitCrew(crewId, { type: "visit_created", visitId: visit.id, gymName: visit.gym.name, userId });
+  await logEvent("visit_create", { userId, req, meta: { crewId, visitId: visit.id, gymName: visit.gym.name } });
   return json({ ...visit, mine: true, attendeeCount: visit.attendees.length }, 201);
 }

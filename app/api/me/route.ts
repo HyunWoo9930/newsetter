@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { getCurrentUserId } from "@/lib/auth";
 import { json, unauthorized, notFound, parseBody } from "@/lib/http";
 import { estimateUserAbility } from "@/lib/ability";
+import { logEvent } from "@/lib/activity";
 
 // 내 프로필 + 실력 추정치
 export async function GET() {
@@ -72,6 +73,7 @@ export async function DELETE() {
   const userId = await getCurrentUserId();
   if (!userId) return unauthorized();
 
+  await logEvent("account_delete", { userId, meta: { userId } });
   await prisma.$transaction(async (tx) => {
     // 내가 크루장인 크루 통째 삭제(멤버·투표·방문·홈짐 cascade). 크루장 위임 대신 삭제.
     await tx.crew.deleteMany({ where: { leaderId: userId } });

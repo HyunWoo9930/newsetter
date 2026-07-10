@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { getCurrentUserId } from "@/lib/auth";
 import { json, unauthorized, notFound, parseBody } from "@/lib/http";
 import { settingIdForVisit } from "@/lib/gym";
+import { logEvent } from "@/lib/activity";
 
 // 내 일정/기록 통합 목록 — 개인 기록(crewId null) + 내가 참석하는 크루 일정
 export async function GET() {
@@ -58,5 +59,6 @@ export async function POST(req: Request) {
     data: { crewId: null, gymId, gymSettingId: settingId, date, source: "MANUAL", createdById: userId },
     include: { gym: { select: { id: true, name: true } } },
   });
+  await logEvent("visit_create", { userId, req, meta: { visitId: visit.id, personal: true } });
   return json({ ...visit, personal: true, crewName: null, mine: true, attendeeCount: 0 }, 201);
 }

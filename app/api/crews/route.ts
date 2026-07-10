@@ -4,6 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { getCurrentUserId } from "@/lib/auth";
 import { json, error, unauthorized, tooMany, parseBody, generateInviteCode } from "@/lib/http";
 import { rateLimit } from "@/lib/ratelimit";
+import { logEvent } from "@/lib/activity";
 
 const createSchema = z.object({
   name: z.string().min(1, "크루 이름을 입력해주세요").max(40),
@@ -52,6 +53,7 @@ export async function POST(req: Request) {
             : undefined,
         },
       });
+      await logEvent("crew_create", { userId, req, meta: { crewId: crew.id, name: crew.name } });
       return json(crew, 201);
     } catch (e) {
       // 초대 코드 유니크 충돌이면 재시도

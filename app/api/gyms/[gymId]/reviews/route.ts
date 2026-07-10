@@ -5,6 +5,7 @@ import { json, error, unauthorized, notFound, parseBody } from "@/lib/http";
 import { getApprovedMembership } from "@/lib/crew";
 import { rateLimit } from "@/lib/ratelimit";
 import { tooMany } from "@/lib/http";
+import { logEvent } from "@/lib/activity";
 
 // 암장 리뷰 목록 (?settingId= 로 특정 세팅 회차 리뷰만) — 로그인 필요(리뷰어 프로필 노출)
 export async function GET(req: Request, { params }: { params: Promise<{ gymId: string }> }) {
@@ -59,5 +60,6 @@ export async function POST(req: Request, { params }: { params: Promise<{ gymId: 
   const review = existing
     ? await prisma.review.update({ where: { id: existing.id }, data, include: { user: { select: { id: true, nickname: true, profileImg: true } } } })
     : await prisma.review.create({ data: { userId, gymId, gymSettingId: d.gymSettingId ?? null, ...data }, include: { user: { select: { id: true, nickname: true, profileImg: true } } } });
+  await logEvent("review_create", { userId, req, meta: { gymId, rating: d.rating, updated: !!existing } });
   return json(review, existing ? 200 : 201);
 }

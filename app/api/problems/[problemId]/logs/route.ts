@@ -2,6 +2,7 @@ import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { getCurrentUserId } from "@/lib/auth";
 import { json, unauthorized, notFound, parseBody } from "@/lib/http";
+import { logEvent } from "@/lib/activity";
 
 // 문제의 완등 로그 목록 (영상 피드 + 베타)
 export async function GET(_req: Request, { params }: { params: Promise<{ problemId: string }> }) {
@@ -58,5 +59,6 @@ export async function POST(req: Request, { params }: { params: Promise<{ problem
     create: { problemId, userId, ...data },
     include: { user: { select: { id: true, nickname: true, profileImg: true } } },
   });
+  await logEvent("climb_log", { userId, req, meta: { problemId, sent: d.sent } });
   return json(log, 201);
 }

@@ -5,6 +5,7 @@ import { json, error, unauthorized, forbidden, notFound, parseBody } from "@/lib
 import { getApprovedMembership } from "@/lib/crew";
 import { settingIdForVisit } from "@/lib/gym";
 import { emitCrew } from "@/lib/events";
+import { logEvent } from "@/lib/activity";
 
 // 일정 변경/취소 권한: 만든 사람 또는 크루장 (개인 기록은 /api/me/visits 로)
 async function loadEditable(visitId: string, userId: string) {
@@ -56,6 +57,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ visitI
   });
 
   emitCrew(visit.crewId, { type: "visit_updated", visitId, gymName: updated.gym.name, userId });
+  await logEvent("visit_update", { userId, req, meta: { visitId, crewId: visit.crewId, gymName: updated.gym.name } });
   return json({ ...updated, mine: updated.attendees.some((a) => a.userId === userId), attendeeCount: updated.attendees.length });
 }
 
@@ -71,5 +73,6 @@ export async function DELETE(_req: Request, { params }: { params: Promise<{ visi
 
   await prisma.visit.delete({ where: { id: visitId } });
   emitCrew(visit.crewId, { type: "visit_canceled", visitId, gymName: visit.gym.name, userId });
+  await logEvent("visit_cancel", { userId, req: _req, meta: { visitId, crewId: visit.crewId, gymName: visit.gym.name } });
   return json({ ok: true });
 }
