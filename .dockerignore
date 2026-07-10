@@ -1,0 +1,14 @@
+node_modules
+.next
+.git
+.github
+.env
+.env*
+*.log
+scripts/*.mjs
+prisma/data
+public/brand/screencap
+README.md
+docs
+Dockerfile
+.dockerignore

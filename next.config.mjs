@@ -2,6 +2,7 @@
 const nextConfig = {
   reactStrictMode: true,
   poweredByHeader: false,
+  output: "standalone", // 자체 포함 이미지 빌드용 (무중단 배포)
   async headers() {
     return [
       {

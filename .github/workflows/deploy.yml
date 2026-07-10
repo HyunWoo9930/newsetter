@@ -1,7 +1,10 @@
 name: Deploy to server
 
-# main 에 push 되면 서버(self-hosted 러너)에서 빌드→DB반영→재배포.
-# 러너는 서버 위에서 돌고, 앱 코드/빌드는 /home/opc/newsetter (k8s hostPath 마운트) 에 그대로 반영됨.
+# main 에 push 되면 self-hosted 러너에서:
+#   1) 불변 이미지 빌드(buildah) → containerd(k3s) 로 import
+#   2) DB 스키마 반영(setter-db 파드 IP 로 직접, port-forward 없이)
+#   3) rollout restart → maxUnavailable:0 RollingUpdate 로 "무중단" 교체
+# 호스트 파일시스템에 빌드 산출물을 남기지 않음(옛 hostPath 방식 폐기) → 재현성·안정성 ↑.
 on:
   push:
     branches: [main]
@@ -17,62 +20,71 @@ jobs:
     env:
       APP_DIR: /home/opc/newsetter
       KUBECONFIG: /home/opc/.kube/config
+      IMAGE: localhost/setter
     steps:
       - name: Sync working tree to pushed commit
         run: |
           cd "$APP_DIR"
           git fetch origin main
           git reset --hard origin/main
+          SHA=$(git rev-parse --short HEAD)
+          echo "SHA=$SHA" >> "$GITHUB_ENV"
           git log --oneline -1
 
-      - name: Write .env from secrets
-        run: |
-          cat > "$APP_DIR/.env" <<'EOF'
-          DATABASE_URL=${{ secrets.DATABASE_URL }}
-          NEXTAUTH_URL=${{ secrets.NEXTAUTH_URL }}
-          NEXTAUTH_SECRET=${{ secrets.NEXTAUTH_SECRET }}
-          DEV_USER_ID=
-          ADMIN_KAKAO_IDS=${{ secrets.ADMIN_KAKAO_IDS }}
-          KAKAO_CLIENT_ID=${{ secrets.KAKAO_CLIENT_ID }}
-          KAKAO_CLIENT_SECRET=${{ secrets.KAKAO_CLIENT_SECRET }}
-          NEXT_PUBLIC_KAKAO_ENABLED=${{ secrets.NEXT_PUBLIC_KAKAO_ENABLED }}
-          NEXT_PUBLIC_KAKAO_JS_KEY=${{ secrets.NEXT_PUBLIC_KAKAO_JS_KEY }}
-          NEXT_PUBLIC_NAVER_MAP_CLIENT_ID=${{ secrets.NEXT_PUBLIC_NAVER_MAP_CLIENT_ID }}
-          NAVER_MAP_CLIENT_SECRET=${{ secrets.NAVER_MAP_CLIENT_SECRET }}
-          NAVER_CLIENT_ID=${{ secrets.NAVER_CLIENT_ID }}
-          NAVER_CLIENT_SECRET=${{ secrets.NAVER_CLIENT_SECRET }}
-          EOF
+      # prisma CLI 는 standalone 런타임 이미지에 없으므로(용량 최소화) DB push 는 호스트에서 수행.
+      - name: Install prisma toolchain (host, for db push only)
+        run: cd "$APP_DIR" && PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm ci --no-audit --no-fund && npx prisma generate
 
-      - name: Install dependencies
-        run: cd "$APP_DIR" && PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm install --no-audit --no-fund
-
-      - name: Prisma generate
-        run: cd "$APP_DIR" && npx prisma generate
-
-      - name: Push DB schema
+      - name: Push DB schema (direct to setter-db pod IP)
         run: |
           cd "$APP_DIR"
-          # 인클러스터 setter-db 로 직접 push (port-forward 는 CI 에서 불안정 → 파드 내부 exec).
-          # 파드는 hostPath 로 /app(=$APP_DIR)을 마운트하므로 방금 git reset 한 스키마·node_modules 를 그대로 사용.
-          POD=$(kubectl -n setter get pods -l app=setter -o jsonpath='{.items[?(@.status.phase=="Running")].metadata.name}' | tr ' ' '\n' | head -1)
-          if [ -z "$POD" ]; then echo "no running setter pod — skip (next deploy applies)"; exit 0; fi
-          kubectl -n setter exec "$POD" -- sh -c 'cd /app && DATABASE_URL="postgresql://climbcrew:climbcrew@setter-db:5432/climbcrew?schema=public" npx prisma db push --skip-generate --accept-data-loss'
+          # ClusterIP DNS 는 호스트에서 안 풀리고 port-forward 는 CI 에서 불안정 → 파드 IP 로 직접 연결.
+          DBIP=$(kubectl -n setter get pod -l app=setter-db -o jsonpath='{.items[0].status.podIP}')
+          if [ -z "$DBIP" ]; then echo "no setter-db pod IP"; exit 1; fi
+          echo "setter-db at $DBIP"
+          DATABASE_URL="postgresql://climbcrew:climbcrew@$DBIP:5432/climbcrew?schema=public" \
+            npx prisma db push --skip-generate --accept-data-loss
 
-      - name: Build
-        run: cd "$APP_DIR" && NODE_OPTIONS=--max-old-space-size=2048 npm run build
-
-      - name: Redeploy (rollout restart)
+      - name: Build image (buildah, daemonless)
         run: |
-          rm -rf "$APP_DIR/.next/cache" 2>/dev/null || true
+          cd "$APP_DIR"
+          sudo buildah bud \
+            --build-arg NEXT_PUBLIC_KAKAO_ENABLED="${{ secrets.NEXT_PUBLIC_KAKAO_ENABLED }}" \
+            --build-arg NEXT_PUBLIC_KAKAO_JS_KEY="${{ secrets.NEXT_PUBLIC_KAKAO_JS_KEY }}" \
+            --build-arg NEXT_PUBLIC_NAVER_MAP_CLIENT_ID="${{ secrets.NEXT_PUBLIC_NAVER_MAP_CLIENT_ID }}" \
+            --build-arg NEXTAUTH_URL="${{ secrets.NEXTAUTH_URL }}" \
+            -t "$IMAGE:git-$SHA" -t "$IMAGE:latest" -f Dockerfile .
+
+      - name: Import image into k3s containerd
+        run: |
+          TAR="/tmp/setter-$SHA.tar"
+          sudo rm -f "$TAR"
+          # docker-archive 포맷이라야 containerd 가 태그명으로 인식(oci-archive 는 이름 유실).
+          sudo buildah push "$IMAGE:git-$SHA" "docker-archive:$TAR:$IMAGE:latest"
+          sudo /usr/local/bin/k3s ctr -n k8s.io images import "$TAR"
+          sudo rm -f "$TAR"
+          sudo /usr/local/bin/k3s ctr -n k8s.io images ls | grep "$IMAGE:latest" | head -1
+
+      - name: Rollout (zero-downtime)
+        run: |
+          # 같은 :latest 태그라도 restart 로 새 파드가 방금 import 한 이미지를 사용.
           kubectl -n setter rollout restart deploy/setter
           kubectl -n setter rollout status deploy/setter --timeout=180s
 
-      - name: Verify
+      - name: Verify live
         run: |
           for i in 1 2 3 4 5; do
             code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 8 https://setter.ohw.co.kr/ || true)
             echo "attempt $i: HTTP $code"
-            [ "$code" = "200" ] && exit 0
+            [ "$code" = "200" ] && break
+            [ "$i" = "5" ] && { echo "site did not return 200"; exit 1; }
             sleep 6
           done
-          echo "site did not return 200"; exit 1
+
+      - name: Prune old images (keep last 3 git-* )
+        if: always()
+        run: |
+          # containerd 디스크 누수 방지 — git-* 태그 최근 3개만 유지.
+          OLD=$(sudo /usr/local/bin/k3s ctr -n k8s.io images ls -q 2>/dev/null | grep "$IMAGE:git-" | sort | head -n -3)
+          for img in $OLD; do sudo /usr/local/bin/k3s ctr -n k8s.io images rm "$img" 2>/dev/null || true; done
+          sudo buildah rmi --prune 2>/dev/null || true
