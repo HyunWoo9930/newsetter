@@ -1,0 +1,78 @@
+name: Deploy to server
+
+# main 에 push 되면 서버(self-hosted 러너)에서 빌드→DB반영→재배포.
+# 러너는 서버 위에서 돌고, 앱 코드/빌드는 /home/opc/newsetter (k8s hostPath 마운트) 에 그대로 반영됨.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-newsetter
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: [self-hosted, newsetter]
+    env:
+      APP_DIR: /home/opc/newsetter
+      KUBECONFIG: /home/opc/.kube/config
+    steps:
+      - name: Sync working tree to pushed commit
+        run: |
+          cd "$APP_DIR"
+          git fetch origin main
+          git reset --hard origin/main
+          git log --oneline -1
+
+      - name: Write .env from secrets
+        run: |
+          cat > "$APP_DIR/.env" <<'EOF'
+          DATABASE_URL=${{ secrets.DATABASE_URL }}
+          NEXTAUTH_URL=${{ secrets.NEXTAUTH_URL }}
+          NEXTAUTH_SECRET=${{ secrets.NEXTAUTH_SECRET }}
+          DEV_USER_ID=
+          ADMIN_KAKAO_IDS=${{ secrets.ADMIN_KAKAO_IDS }}
+          KAKAO_CLIENT_ID=${{ secrets.KAKAO_CLIENT_ID }}
+          KAKAO_CLIENT_SECRET=${{ secrets.KAKAO_CLIENT_SECRET }}
+          NEXT_PUBLIC_KAKAO_ENABLED=${{ secrets.NEXT_PUBLIC_KAKAO_ENABLED }}
+          NEXT_PUBLIC_KAKAO_JS_KEY=${{ secrets.NEXT_PUBLIC_KAKAO_JS_KEY }}
+          NEXT_PUBLIC_NAVER_MAP_CLIENT_ID=${{ secrets.NEXT_PUBLIC_NAVER_MAP_CLIENT_ID }}
+          NAVER_MAP_CLIENT_SECRET=${{ secrets.NAVER_MAP_CLIENT_SECRET }}
+          NAVER_CLIENT_ID=${{ secrets.NAVER_CLIENT_ID }}
+          NAVER_CLIENT_SECRET=${{ secrets.NAVER_CLIENT_SECRET }}
+          EOF
+
+      - name: Install dependencies
+        run: cd "$APP_DIR" && PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm install --no-audit --no-fund
+
+      - name: Prisma generate
+        run: cd "$APP_DIR" && npx prisma generate
+
+      - name: Push DB schema
+        run: |
+          cd "$APP_DIR"
+          kubectl -n setter port-forward svc/setter-db 5432:5432 >/tmp/ci-pf.log 2>&1 &
+          PF=$!
+          sleep 5
+          npx prisma db push --skip-generate --accept-data-loss
+          kill "$PF" 2>/dev/null || true
+
+      - name: Build
+        run: cd "$APP_DIR" && NODE_OPTIONS=--max-old-space-size=2048 npm run build
+
+      - name: Redeploy (rollout restart)
+        run: |
+          rm -rf "$APP_DIR/.next/cache" 2>/dev/null || true
+          kubectl -n setter rollout restart deploy/setter
+          kubectl -n setter rollout status deploy/setter --timeout=180s
+
+      - name: Verify
+        run: |
+          for i in 1 2 3 4 5; do
+            code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 8 https://setter.ohw.co.kr/ || true)
+            echo "attempt $i: HTTP $code"
+            [ "$code" = "200" ] && exit 0
+            sleep 6
+          done
+          echo "site did not return 200"; exit 1
