@@ -211,10 +211,13 @@ export default async function AdminPage() {
   const secHdr: React.CSSProperties = { fontSize: 14, fontWeight: 700, padding: "14px 16px", borderBottom: `1px solid ${LINE}` };
 
   return (
-    <div style={{ minHeight: "100vh", background: BG, fontFamily: "system-ui, -apple-system, sans-serif", color: INK }}>
-      <div style={{ maxWidth: 1080, margin: "0 auto", padding: "28px 20px 64px" }}>
-        <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
-          <h1 style={{ fontSize: 24, fontWeight: 800, margin: 0 }}>NewSetter 관리자</h1>
+    <div style={{ minHeight: "100vh", background: BG, fontFamily: "system-ui, -apple-system, sans-serif", color: INK, overflowX: "hidden" }}>
+      <div style={{ maxWidth: 1080, margin: "0 auto", padding: "24px 16px 64px" }}>
+        <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
+          <div>
+            <h1 style={{ fontSize: 24, fontWeight: 800, margin: 0 }}>NewSetter 관리자</h1>
+            <div style={{ fontSize: 12, color: MUTE, marginTop: 4 }}>기준 {kst(now)} · <a href="/admin" style={{ color: "#2563eb" }}>↻ 새로고침</a></div>
+          </div>
           <div style={{ fontSize: 13, color: MUTE }}>{me?.nickname} 님 · <a href="/" style={{ color: "#2563eb" }}>앱으로</a></div>
         </div>
 
@@ -233,25 +236,28 @@ export default async function AdminPage() {
         {/* ── 활성화 퍼널 (이탈 지점) ── */}
         <section style={{ background: "#fff", border: `1px solid ${LINE}`, borderRadius: 12, padding: 18, marginTop: 20 }}>
           <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 4 }}>활성화 퍼널 · 어디서 이탈하나</div>
-          <div style={{ fontSize: 12, color: MUTE, marginBottom: 16 }}>각 단계에 도달한 고유 유저 수. 단계 사이 급감 = 그 지점에서 이탈.</div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          <div style={{ fontSize: 12, color: MUTE, marginBottom: 16 }}>단계별 도달 고유 유저 수. 우측은 가입 대비 전환율 · 직전 단계 대비 이탈.</div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
             {funnel.map((f, i) => {
               const prev = i === 0 ? f.count : funnel[i - 1].count;
               const pctTotal = Math.round((f.count / funnelMax) * 100);
               const drop = i === 0 ? 0 : prev - f.count;
               const dropPct = i === 0 || prev === 0 ? 0 : Math.round((drop / prev) * 100);
               return (
-                <div key={i} style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                  <div style={{ width: 84, fontSize: 13, fontWeight: 600, flexShrink: 0 }}>{f.label}</div>
-                  <div style={{ flex: 1, background: "#f1f5f9", borderRadius: 8, height: 34, position: "relative", overflow: "hidden" }}>
-                    <div style={{ width: `${Math.max(pctTotal, 3)}%`, height: "100%", background: f.color, borderRadius: 8, display: "flex", alignItems: "center", paddingLeft: 10, color: "#fff", fontSize: 13, fontWeight: 700 }}>
+                <div key={i} style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  <div style={{ width: 76, flexShrink: 0 }}>
+                    <div style={{ fontSize: 13, fontWeight: 700, lineHeight: 1.2 }}>{f.label}</div>
+                    <div style={{ fontSize: 10, color: MUTE, lineHeight: 1.2, marginTop: 1 }}>{f.desc}</div>
+                  </div>
+                  <div style={{ flex: 1, minWidth: 0, background: "#f1f5f9", borderRadius: 8, height: 30, overflow: "hidden" }}>
+                    <div style={{ width: `max(${pctTotal}%, 30px)`, height: "100%", background: f.color, borderRadius: 8, display: "flex", alignItems: "center", paddingLeft: 9, color: "#fff", fontSize: 13, fontWeight: 700 }}>
                       {f.count}
                     </div>
-                    <div style={{ position: "absolute", right: 10, top: 0, height: "100%", display: "flex", alignItems: "center", fontSize: 11, color: MUTE }}>{pctTotal}% · {f.desc}</div>
                   </div>
-                  <div style={{ width: 96, textAlign: "right", fontSize: 12, flexShrink: 0, color: drop > 0 ? "#dc2626" : MUTE }}>
-                    {i === 0 ? "—" : `▼ ${drop}명 이탈`}
-                    {i > 0 && <div style={{ fontSize: 11, color: MUTE }}>({dropPct}%)</div>}
+                  <div style={{ width: 72, flexShrink: 0, textAlign: "right" }}>
+                    <div style={{ fontSize: 14, fontWeight: 700 }}>{pctTotal}%</div>
+                    {i > 0 && drop > 0 && <div style={{ fontSize: 11, color: "#dc2626" }}>▼{drop} ({dropPct}%)</div>}
+                    {i > 0 && drop === 0 && <div style={{ fontSize: 11, color: MUTE }}>유지</div>}
                   </div>
                 </div>
               );
@@ -263,14 +269,16 @@ export default async function AdminPage() {
           {/* 최근 14일 가입 */}
           <section style={{ background: "#fff", border: `1px solid ${LINE}`, borderRadius: 12, padding: 18 }}>
             <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 14 }}>최근 14일 가입</div>
-            <div style={{ display: "flex", alignItems: "flex-end", gap: 6, height: 110 }}>
-              {days.map((d, i) => (
-                <div key={i} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
-                  <div style={{ fontSize: 11, color: MUTE }}>{d.count || ""}</div>
-                  <div title={`${d.label}: ${d.count}명`} style={{ width: "100%", maxWidth: 28, height: `${(d.count / maxDay) * 78}px`, minHeight: d.count ? 4 : 0, background: "#3b82f6", borderRadius: "4px 4px 0 0" }} />
-                  <div style={{ fontSize: 10, color: MUTE, transform: "rotate(-45deg)", whiteSpace: "nowrap", marginTop: 2 }}>{d.label}</div>
-                </div>
-              ))}
+            <div style={{ overflowX: "auto", paddingBottom: 2 }}>
+              <div style={{ display: "flex", alignItems: "flex-end", gap: 7, height: 120, minWidth: 392 }}>
+                {days.map((d, i) => (
+                  <div key={i} style={{ width: 21, flexShrink: 0, display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
+                    <div style={{ fontSize: 11, color: MUTE, height: 14 }}>{d.count || ""}</div>
+                    <div title={`${d.label}: ${d.count}명`} style={{ width: "100%", height: `${(d.count / maxDay) * 74}px`, minHeight: d.count ? 4 : 0, background: "#3b82f6", borderRadius: "4px 4px 0 0" }} />
+                    <div style={{ fontSize: 9, color: MUTE, whiteSpace: "nowrap" }}>{i % 2 === 0 ? d.label.replace(/\s/g, "") : ""}</div>
+                  </div>
+                ))}
+              </div>
             </div>
           </section>
 
