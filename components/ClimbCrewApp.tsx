@@ -844,7 +844,8 @@ export default function ClimbCrewApp() {
   // 투표 옵션 어댑터
   const votePoll = openPoll;
   const votersOf = (o: Any) => (o.votes ?? []).map((v: Any) => ({ id: v.user?.id, name: v.user?.nickname || "?", img: v.user?.profileImg || null }));
-  const gymOpts = (votePoll?.gymOptions ?? []).map((o: Any) => { const g = gyms.find((x) => x.id === o.gymId); return { id: o.id, name: o.gym?.name || "", meta: g ? visitLabel(g) : "", count: o._count?.votes ?? o.votes?.length ?? 0, voters: votersOf(o) }; }).sort((a: Any, b: Any) => b.count - a.count);
+  // fresh = 한 달(4주)+ 동안 크루 누구도 안 간 암장 → 투표에서 "새 문제 많이 남았을 곳"으로 추천
+  const gymOpts = (votePoll?.gymOptions ?? []).map((o: Any) => { const g = gyms.find((x) => x.id === o.gymId); return { id: o.id, name: o.gym?.name || "", meta: g ? visitLabel(g) : "", fresh: g ? (!g.ever || (g.weeks ?? 0) >= 4) : false, count: o._count?.votes ?? o.votes?.length ?? 0, voters: votersOf(o) }; }).sort((a: Any, b: Any) => b.count - a.count || (b.fresh ? 1 : 0) - (a.fresh ? 1 : 0));
   const hasGymOpts = gymOpts.length > 0;
 
   // 마감 프리뷰 — 서버와 같은 규칙으로 뭘로 확정되는지 미리 보여줌.
@@ -1290,10 +1291,10 @@ export default function ClimbCrewApp() {
                   {hasGymOpts && voteTab === "gym" && (
                     <div style={{ padding: "18px 16px 0" }}>
                       <div style={{ fontSize: 15, fontWeight: 700, marginBottom: 2 }}>선호 암장을 골라주세요</div>
-                      <div style={{ fontSize: 12, color: "#514C44", marginBottom: 14 }}>다른 사람이 많이 고른 곳이 위에 · 여러 곳 가능</div>
+                      <div style={{ fontSize: 12, color: "#514C44", marginBottom: 14 }}>다른 사람이 많이 고른 곳이 위에 · 여러 곳 가능 · 🌱 = 한 달간 아무도 안 간 곳</div>
                       <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
                         {gymOpts.map((o: Any) => { const sel = !!voteGyms[o.id]; return (
-                          <div key={o.id} onClick={() => { if (voteSubmitted) { showToast("아래 '수정하기'를 누르면 바꿀 수 있어요"); return; } setVoteGyms((v) => ({ ...v, [o.id]: !v[o.id] })); }} style={{ ...rowStyle(sel), alignItems: "flex-start" }}><div style={{ ...boxStyle(sel), marginTop: 1 }}>{sel ? "✓" : ""}</div><div style={{ flex: 1, minWidth: 0 }}><div style={{ fontSize: 15, fontWeight: 600 }}>{o.name}</div><div style={{ fontSize: 12, color: "#514C44", marginTop: 2 }}>{o.meta}</div>{voterRow(o.voters)}</div><div style={{ fontSize: 13, fontWeight: 700, color: "#514C44" }}>{o.count}표</div></div>
+                          <div key={o.id} onClick={() => { if (voteSubmitted) { showToast("아래 '수정하기'를 누르면 바꿀 수 있어요"); return; } setVoteGyms((v) => ({ ...v, [o.id]: !v[o.id] })); }} style={{ ...rowStyle(sel), alignItems: "flex-start" }}><div style={{ ...boxStyle(sel), marginTop: 1 }}>{sel ? "✓" : ""}</div><div style={{ flex: 1, minWidth: 0 }}><div style={{ fontSize: 15, fontWeight: 600, display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>{o.name}{o.fresh && <span style={{ display: "inline-flex", alignItems: "center", gap: 3, padding: "2px 8px", borderRadius: 999, fontSize: 11, fontWeight: 700, background: "#E4F5EC", color: "#3E7D2E", border: `1.5px solid ${INK}`, transform: "rotate(-1deg)" }}>🌱 한 달간 아무도 안 감</span>}</div><div style={{ fontSize: 12, color: "#514C44", marginTop: 2 }}>{o.meta}</div>{voterRow(o.voters)}</div><div style={{ fontSize: 13, fontWeight: 700, color: "#514C44" }}>{o.count}표</div></div>
                         ); })}
                       </div>
                     </div>
