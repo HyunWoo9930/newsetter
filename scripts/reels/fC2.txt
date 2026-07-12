@@ -1,0 +1,6 @@
+[0:v]trim=0.5:5.5,setpts=PTS-STARTPTS,scale=-2:1350,pad=1080:1920:(ow-iw)/2:240:color=0xFFFDF6,
+drawtext=fontfile=Gaegu-Bold.ttf:text='찾는 방법은 찍어놓은 인스타 확인하고':fontsize=48:fontcolor=0x3A3633:x=(w-text_w)/2:y=1615:enable='between(t,0.2,5)',
+drawtext=fontfile=Gaegu-Bold.ttf:text='언제 갔는지 찾을수 밖에 없는데요':fontsize=48:fontcolor=0x3A3633:x=(w-text_w)/2:y=1690:enable='between(t,0.2,5)',
+drawtext=fontfile=Gaegu-Bold.ttf:text='(벌써 n번째)':fontsize=44:fontcolor=0xC23A24:x=(w-text_w)/2:y=1775:enable='between(t,1,5)'[base];
+[1:v]scale=330:-1[s3];
+[base][s3]overlay=x=W-w-60:y=1150+12*sin(2*PI*t*0.6)

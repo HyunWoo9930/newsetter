@@ -1,0 +1,10 @@
+[0:v]scale=1080:1350,pad=1080:1920:0:240:color=0xFFFDF6,
+drawtext=fontfile=Gaegu-Bold.ttf:text='클라이밍하다 불편해진':fontsize=62:fontcolor=0x3A3633:x=(w-text_w)/2:y=62:enable='between(t,0,2.3)',
+drawtext=fontfile=Gaegu-Bold.ttf:text='다들 이런 경험 있으시지 않으셨나요..?':fontsize=48:fontcolor=0x3A3633:x=(w-text_w)/2:y=150:enable='between(t,0,2.3)',
+drawtext=fontfile=Gaegu-Bold.ttf:text='(실화 바탕)':fontsize=40:fontcolor=0x8A8378:x=(w-text_w)/2:y=1700:enable='between(t,0.9,2.3)',
+drawtext=fontfile=Gaegu-Bold.ttf:text='암장 벽은 매주 하나씩 바뀌는데요!':fontsize=56:fontcolor=0x3A3633:x=(w-text_w)/2:y=1630:enable='between(t,2.3,4.6)',
+drawtext=fontfile=Gaegu-Bold.ttf:text='대부분 한달이면 모든 벽 문제가 바뀝니다!':fontsize=50:fontcolor=0xC23A24:x=(w-text_w)/2:y=1725:enable='between(t,2.3,4.6)'[base];
+[1:v]scale=250:-1[s1];
+[2:v]scale=270:-1[s6];
+[base][s1]overlay=x=44:y=1300+10*sin(2*PI*t):enable='between(t,0,2.3)'[v1];
+[v1][s6]overlay=x=W-w-44:y=1280+10*sin(2*PI*t*0.8):enable='between(t,2.3,4.6)'

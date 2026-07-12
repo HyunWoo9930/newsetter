@@ -1,0 +1,12 @@
+[0:v]trim=30:38.2,setpts=PTS-STARTPTS,scale=1080:1350,pad=1080:1920:0:240:color=0xFFFDF6,
+drawtext=fontfile=Gaegu-Bold.ttf:text='근데 나... 여기 마지막으로':fontsize=58:fontcolor=0x3A3633:x=(w-text_w)/2:y=1625:enable='between(t,0,3.8)',
+drawtext=fontfile=Gaegu-Bold.ttf:text='언제 왔더라..?':fontsize=76:fontcolor=0x3A3633:x=(w-text_w)/2:y=1712:enable='between(t,0,3.8)',
+drawbox=x=60:y=700:w=960:h=520:color=0xFFFDF6@0.94:t=fill:enable='between(t,3.8,8.2)',
+drawbox=x=60:y=700:w=960:h=520:color=0x3A3633:t=6:enable='between(t,3.8,8.2)',
+drawtext=fontfile=Gaegu-Bold.ttf:text='이제 암장을 매번 가지 않으면':fontsize=62:fontcolor=0x3A3633:x=(w-text_w)/2:y=775:enable='between(t,3.8,8.2)',
+drawtext=fontfile=Gaegu-Bold.ttf:text='이 쿨타임 맞추기가':fontsize=62:fontcolor=0x3A3633:x=(w-text_w)/2:y=915:enable='between(t,3.8,8.2)',
+drawtext=fontfile=Gaegu-Bold.ttf:text='너무 어렵지 않으신가요?!':fontsize=66:fontcolor=0xC23A24:x=(w-text_w)/2:y=1055:enable='between(t,3.8,8.2)',
+drawtext=fontfile=Gaegu-Bold.ttf:text='까먹은 암장들 문제가':fontsize=42:fontcolor=0x8A8378:x=(w-text_w)/2:y=90:enable='between(t,3.8,8.2)',
+drawtext=fontfile=Gaegu-Bold.ttf:text='하나씩 사라져버려요 ㅜㅜ':fontsize=42:fontcolor=0x8A8378:x=(w-text_w)/2:y=155:enable='between(t,3.8,8.2)'[base];
+[1:v]scale=280:-1[s6];
+[base][s6]overlay=x=W-w-50:y=1560+10*sin(2*PI*t*0.7):enable='between(t,3.8,8.2)'

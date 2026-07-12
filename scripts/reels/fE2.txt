@@ -1,0 +1,6 @@
+[0:v]scale=1080:-2,crop=1080:1350:0:(ih-1350)/2,pad=1080:1920:0:240:color=0xFFFDF6,
+drawtext=fontfile=Gaegu-Bold.ttf:text='이것만 불편한게 아닌데요,,':fontsize=58:fontcolor=0x3A3633:x=(w-text_w)/2:y=105:enable='between(t,0.2,3.5)',
+drawtext=fontfile=Gaegu-Bold.ttf:text='다음 편 >>':fontsize=80:fontcolor=0xC23A24:x=(w-text_w)/2:y=1620:enable='between(t,0.5,3.5)',
+drawtext=fontfile=Gaegu-Bold.ttf:text='뉴세터 · 프로필 링크로 들어가실수 있습니다!':fontsize=40:fontcolor=0x8A8378:x=(w-text_w)/2:y=1755:enable='between(t,0.5,3.5)'[base];
+[1:v]scale=340:-1[s5];
+[base][s5]overlay=x=(W-w)/2:y=860+10*sin(2*PI*t*0.7)

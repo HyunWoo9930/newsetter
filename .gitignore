@@ -13,3 +13,6 @@ next-env.d.ts
 
 # TS 증분 빌드 캐시
 tsconfig.tsbuildinfo
+
+# 원본 촬영 영상은 용량 문제로 git 제외 (IMG_3281.mov 103MB > GitHub 100MB 제한)
+public/brand/*.mov
