@@ -36,10 +36,24 @@ export async function POST(_req: Request, { params }: { params: Promise<{ pollId
     return diff !== 0 ? diff : a.date.getTime() - b.date.getTime();
   })[0];
 
-  // 암장: 최다 득표 (후보 없으면 날짜만 확정)
-  const winnerGym = poll.gymOptions.length
-    ? [...poll.gymOptions].sort((a, b) => b._count.votes - a._count.votes)[0]
-    : null;
+  // 암장: 최다 득표, 동점이면 한 달(28일)+ 아무도 안 간 곳(🌱) 우선 — 클라이언트 프리뷰(gymOpts)와 같은 규칙
+  let winnerGym = null;
+  if (poll.gymOptions.length) {
+    const visitAgg = await prisma.visit.groupBy({
+      by: ["gymId"],
+      where: { crewId: poll.crewId, gymId: { in: poll.gymOptions.map((o) => o.gymId) }, date: { lte: new Date() } },
+      _max: { date: true },
+    });
+    const lastVisitByGym = new Map(visitAgg.map((v) => [v.gymId, v._max.date]));
+    const FOUR_WEEKS_MS = 28 * 24 * 60 * 60 * 1000;
+    const isFresh = (gymId: string) => {
+      const last = lastVisitByGym.get(gymId);
+      return !last || Date.now() - last.getTime() >= FOUR_WEEKS_MS;
+    };
+    winnerGym = [...poll.gymOptions].sort(
+      (a, b) => b._count.votes - a._count.votes || Number(isFresh(b.gymId)) - Number(isFresh(a.gymId))
+    )[0];
+  }
 
   const updatedPoll = await prisma.poll.update({
     where: { id: pollId },
