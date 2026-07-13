@@ -42,6 +42,9 @@ export const api = {
 
   deleteAccount: () => nf("/api/me", { method: "DELETE" }).then(j),
 
+  // 개발자에게 문의하기
+  sendFeedback: (category: string, content: string) => nf("/api/feedback", jsonInit("POST", { category, content })).then(j),
+
   // 개인 모드 — 내 암장/기록/즐겨찾기
   meGyms: () => nf("/api/me/gyms", noStore).then(j),
   meVisits: () => nf("/api/me/visits", noStore).then(j),

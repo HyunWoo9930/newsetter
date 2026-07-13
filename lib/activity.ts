@@ -20,6 +20,7 @@ export type EventType =
   | "problem_create"
   | "climb_log"
   | "gym_favorite"
+  | "feedback"
   | "account_delete";
 
 /**

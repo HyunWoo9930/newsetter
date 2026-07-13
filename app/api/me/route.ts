@@ -39,6 +39,7 @@ const schema = z.object({
   homeGymId: z.string().nullable().optional(),
   referenceColor: z.string().max(20).nullable().optional(),
   referenceGrade: z.number().int().min(0).max(20).nullable().optional(),
+  feedbackIntroSeen: z.literal(true).optional(), // 문의하기 안내 모달을 봤음 (1회성 — 되돌리기 없음)
 });
 
 // 프로필 수정 (홈짐/기준 등급 등 개인화 기준점)
@@ -62,6 +63,7 @@ export async function PATCH(req: Request) {
       ...(d.homeGymId !== undefined ? { homeGymId: d.homeGymId } : {}),
       ...(d.referenceColor !== undefined ? { referenceColor: d.referenceColor } : {}),
       ...(d.referenceGrade !== undefined ? { referenceGrade: d.referenceGrade } : {}),
+      ...(d.feedbackIntroSeen ? { feedbackIntroSeenAt: new Date() } : {}),
     },
     include: { homeGym: { select: { id: true, name: true } } },
   });

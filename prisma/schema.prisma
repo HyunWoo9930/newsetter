@@ -69,9 +69,25 @@ model User {
   visitAttendance VisitAttendee[]
   pollResponses   PollResponse[]
   events          ActivityEvent[]
+  feedbacks       Feedback[]
 
   // 마지막 활동 시각(로그인·행동 시 갱신). 이탈(휴면) 판단용.
   lastSeenAt      DateTime?
+  // "개발자에게 문의하기" 안내 모달을 본 시각 — 계정당 1회만 노출
+  feedbackIntroSeenAt DateTime?
+}
+
+// 개발자에게 남기는 피드백 (기능 제안 · 버그 제보 · 의견)
+model Feedback {
+  id        String   @id @default(cuid())
+  userId    String? // 탈퇴해도 피드백은 보존
+  category  String // FEATURE | BUG | OTHER
+  content   String
+  createdAt DateTime @default(now())
+
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([createdAt])
 }
 
 model Crew {

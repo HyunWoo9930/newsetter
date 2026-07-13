@@ -183,6 +183,12 @@ export default function ClimbCrewApp() {
   const [recordGymId, setRecordGymId] = useState<string | null>(null);
   const [recordGymQ, setRecordGymQ] = useState("");
   const [recordDate, setRecordDate] = useState("");
+  // 개발자에게 문의하기 + 1회성 안내 모달
+  const [feedbackSheetOpen, setFeedbackSheetOpen] = useState(false);
+  const [fbCategory, setFbCategory] = useState<"FEATURE" | "BUG" | "OTHER">("FEATURE");
+  const [fbText, setFbText] = useState("");
+  const [introOpen, setIntroOpen] = useState(false);
+  const introHandled = useRef(false); // 이번 세션에 이미 띄웠으면 다시 안 띄움 (PATCH 실패해도)
 
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const showToast = useCallback((m: string) => { setToast(m); clearTimeout(timer.current); timer.current = setTimeout(() => setToast(""), 1900); }, []);
@@ -559,6 +565,31 @@ export default function ClimbCrewApp() {
       setCrews([]); setActiveCrewId(null); setCrewDetail(null); setPolls([]); setVisits([]); setMyGyms([]); setMyVisits([]); setMe(null); setMode("crew"); tab("login");
     } catch (e: Any) { showToast(e.message); } finally { setBusy(false); }
   };
+
+  // 개발자에게 문의하기 — 시트 + 1회성 안내 모달
+  const openFeedbackSheet = () => { setFbCategory("FEATURE"); setFbText(""); setFeedbackSheetOpen(true); };
+  const submitFeedback = async () => {
+    if (!fbText.trim()) { showToast("내용을 입력해주세요"); return; }
+    if (busy) return; setBusy(true);
+    try {
+      await api.sendFeedback(fbCategory, fbText.trim());
+      setFeedbackSheetOpen(false);
+      showToast("전달했어요! 잘 읽을게요 🙏");
+    } catch (e: Any) { showToast(e.message); } finally { setBusy(false); }
+  };
+  const dismissIntro = (goWrite: boolean) => {
+    setIntroOpen(false);
+    setMe((m: Any) => (m ? { ...m, feedbackIntroSeenAt: new Date().toISOString() } : m));
+    api.patch("/api/me", { feedbackIntroSeen: true }).catch(() => {}); // 실패해도 이번 세션엔 안 뜸
+    if (goWrite) openFeedbackSheet();
+  };
+  // 홈에 도달했고 아직 안내를 본 적 없으면 1회 표시 (로그인/시작 화면에선 안 뜸)
+  useEffect(() => {
+    if (screen === "home" && me && !me.feedbackIntroSeenAt && !introHandled.current) {
+      introHandled.current = true;
+      setIntroOpen(true);
+    }
+  }, [screen, me]);
 
   const openCreatePoll = () => { setPollTitle(""); setPollRange({ start: null, end: null }); setPollDeadlineDays(5); setPollGymIds([]); setPickedDay(null); setPollCalOffset(0); setGymSearch(""); go("createPoll"); };
   // 범위 선택: 첫 탭=시작, 둘째 탭=끝(시작보다 빠르면 시작을 다시 잡음). 이미 범위가 있으면 새로 시작.
@@ -1387,6 +1418,7 @@ export default function ClimbCrewApp() {
               <div style={{ padding: "24px 16px 0" }}><div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}><div style={sectionLabel}>내 완등 로그</div><div style={{ fontSize: 11, fontWeight: 700, color: "#514C44", background: "#F3EEDF", padding: "3px 9px", borderRadius: 999 }}>준비 중</div></div><div style={{ padding: 14, ...cardStyle, color: "#514C44", fontSize: 13 }}>완등 기록 기능은 준비 중이에요.</div></div>
               <div style={{ padding: "22px 16px 0" }}><div style={{ ...cardStyle, overflow: "hidden" }}>
                 <div onClick={() => showToast("알림 설정은 준비 중이에요")} style={{ display: "flex", alignItems: "center", gap: 8, padding: "15px 16px", borderBottom: "2px dashed rgba(58,54,51,0.2)", cursor: "pointer" }}><div style={{ flex: 1, fontSize: 15, color: "#514C44" }}>알림 설정</div><div style={{ fontSize: 11, fontWeight: 700, color: "#514C44", background: "#F3EEDF", padding: "3px 9px", borderRadius: 999 }}>준비 중</div></div>
+                <div onClick={openFeedbackSheet} style={{ display: "flex", alignItems: "center", gap: 8, padding: "15px 16px", borderBottom: "2px dashed rgba(58,54,51,0.2)", cursor: "pointer" }}><span style={{ fontSize: 16 }}>💬</span><div style={{ flex: 1, fontSize: 15, fontWeight: 700 }}>개발자에게 문의하기</div><div style={{ fontSize: 12, color: "#514C44" }}>기능 제안 · 버그 · 아무 의견</div><ChevR /></div>
                 {crews.length > 0 && <div onClick={openCrewManage} style={{ display: "flex", alignItems: "center", gap: 8, padding: "15px 16px", borderBottom: "2px dashed rgba(58,54,51,0.2)", cursor: "pointer" }}><svg width="19" height="19" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="3" stroke={INK} strokeWidth="1.8" /><path d="M12 3.5v2M12 18.5v2M3.5 12h2M18.5 12h2M6 6l1.4 1.4M16.6 16.6 18 18M18 6l-1.4 1.4M7.4 16.6 6 18" stroke={INK} strokeWidth="1.8" strokeLinecap="round" /></svg><div style={{ flex: 1, fontSize: 15, fontWeight: 700 }}>크루 관리</div><div style={{ fontSize: 12, color: "#514C44" }}>멤버 · 초대 · 홈 암장</div><ChevR /></div>}
                 {crews.length === 0 && <div onClick={() => go("start")} style={{ display: "flex", alignItems: "center", gap: 8, padding: "15px 16px", borderBottom: "2px dashed rgba(58,54,51,0.2)", cursor: "pointer" }}><div style={{ flex: 1, fontSize: 15, fontWeight: 700 }}>크루 시작하기</div><div style={{ fontSize: 12, color: "#514C44" }}>만들기 · 초대 코드 참여</div><ChevR /></div>}
                 <div onClick={async () => { if (status === "authenticated") await signOut({ redirect: false }); setCrews([]); setActiveCrewId(null); tab("login"); }} style={{ display: "flex", alignItems: "center", padding: "15px 16px", cursor: "pointer", borderBottom: "2px dashed rgba(58,54,51,0.2)" }}><div style={{ flex: 1, fontSize: 15, color: "#D14343" }}>로그아웃</div></div>
@@ -1789,6 +1821,39 @@ export default function ClimbCrewApp() {
                 </>
               )}
               <button onClick={addPersonalVisit} disabled={!recordGymId} style={{ width: "100%", height: 52, marginTop: 4, flexShrink: 0, fontSize: 18, fontWeight: 700, ...crayonBtn(CRAYON.green, 0), opacity: recordGymId ? 1 : 0.5 }}>기록 추가</button>
+            </div>
+          </>
+        )}
+        {feedbackSheetOpen && (
+          <>
+            <div onClick={() => setFeedbackSheetOpen(false)} style={{ position: "absolute", inset: 0, background: "rgba(28,28,26,0.42)", zIndex: 120, animation: "ccfade .2s ease" }} />
+            <div style={{ position: "absolute", left: 0, right: 0, bottom: 0, zIndex: 130, background: "#FFFEFA", borderTop: `2.5px solid ${INK}`, borderRadius: "28px 22px 0 0 / 24px 28px 0 0", padding: "10px 16px 30px", boxShadow: "0 -8px 30px rgba(58,54,51,0.16)", animation: "ccsheet .28s cubic-bezier(.2,.8,.2,1)" }}>
+              <div style={{ width: 44, height: 4, borderRadius: 999, background: "rgba(58,54,51,0.3)", margin: "6px auto 14px", transform: "rotate(-1deg)" }} />
+              <div style={{ fontSize: 17, fontWeight: 800, margin: "0 4px 2px" }}>개발자에게 한마디</div>
+              <div style={{ fontSize: 13, color: "#514C44", margin: "0 4px 14px" }}>직접 읽고 반영해요. 편하게 남겨주세요</div>
+              <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
+                {([["FEATURE", "✨ 기능 제안"], ["BUG", "🐛 버그 제보"], ["OTHER", "💬 그냥 의견"]] as const).map(([key, label], i) => { const on = fbCategory === key; return (
+                  <button key={key} onClick={() => setFbCategory(key)} style={{ flex: 1, padding: "9px 0", fontSize: 14, fontWeight: 700, cursor: "pointer", border: on ? `2px solid ${INK}` : "2px dashed rgba(58,54,51,0.3)", borderRadius: WOBS[i % 4], background: on ? HILITE : "#FFFEFA", color: on ? INK : "#514C44", transform: i % 2 ? "rotate(0.5deg)" : "rotate(-0.5deg)" }}>{label}</button>
+                ); })}
+              </div>
+              <textarea value={fbText} onChange={(e) => setFbText(e.target.value)} maxLength={1000} placeholder={fbCategory === "BUG" ? "예: 투표에서 ○○를 누르면 반응이 없어요" : fbCategory === "FEATURE" ? "예: 암장 검색에 ○○ 필터 있으면 좋겠어요" : "칭찬도 불만도 다 좋아요!"} style={{ width: "100%", height: 110, border: "2px solid #3A3633", borderRadius: 10, padding: "12px 14px", fontSize: 14, background: "#FFFDF6", outline: "none", resize: "none", lineHeight: 1.5, marginBottom: 4 }} />
+              <div style={{ fontSize: 11, color: "#A8A297", textAlign: "right", marginBottom: 10 }}>{fbText.length}/1000</div>
+              <button onClick={submitFeedback} disabled={busy} style={{ width: "100%", height: 52, fontSize: 18, fontWeight: 700, ...crayonBtn(CRAYON.red, 0), opacity: busy ? 0.6 : 1 }}>보내기</button>
+            </div>
+          </>
+        )}
+        {introOpen && (
+          <>
+            <div style={{ position: "absolute", inset: 0, background: "rgba(28,28,26,0.5)", zIndex: 140, animation: "ccfade .25s ease" }} />
+            <div style={{ position: "absolute", left: 20, right: 20, top: "50%", transform: "translateY(-52%) rotate(-0.5deg)", zIndex: 150, background: "#FFFEFA", border: `2.5px solid ${INK}`, borderRadius: WOBS[0], padding: "26px 20px 20px", boxShadow: "0 16px 40px rgba(58,54,51,0.3)", animation: "ccfade .25s ease" }}>
+              <span style={{ position: "absolute", top: -14, left: 16, transform: "rotate(-6deg)", fontSize: 15, fontWeight: 700, padding: "1px 12px", color: INK, background: `repeating-linear-gradient(50deg, rgba(${CRAYON.yellow},0.85) 0 4px, rgba(${CRAYON.yellow},0.6) 4px 7px)`, border: `2px solid ${INK}`, borderRadius: WOBS[2] }}>새 기능!</span>
+              <div style={{ display: "flex", justifyContent: "center", marginBottom: 12 }}>
+                <img src="/brand/mascot/sticker-3-phone.png" alt="" style={{ width: 96, height: 96, objectFit: "contain", transform: "rotate(3deg)" }} />
+              </div>
+              <div style={{ fontSize: 19, fontWeight: 800, textAlign: "center", lineHeight: 1.3 }}>개발자에게 바로<br />문의할 수 있어요</div>
+              <div style={{ fontSize: 14, color: "#514C44", textAlign: "center", lineHeight: 1.55, margin: "10px 2px 18px" }}>있으면 좋겠다 싶은 기능, 거슬리는 버그,<br />아무 의견이나 남겨주세요. <b>진짜 다 읽어요.</b></div>
+              <button onClick={() => dismissIntro(true)} style={{ width: "100%", height: 50, fontSize: 17, fontWeight: 700, ...crayonBtn(CRAYON.red, 0) }}>의견 남기러 가기</button>
+              <button onClick={() => dismissIntro(false)} style={{ width: "100%", height: 42, marginTop: 8, border: "none", background: "transparent", color: "#514C44", fontSize: 14, fontWeight: 600, cursor: "pointer" }}>나중에 할게요</button>
             </div>
           </>
         )}

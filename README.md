@@ -80,6 +80,14 @@ npm run dev              # http://localhost:3000
 | GET | `/api/gym-settings/:settingId/recommendations` | "뭐부터 풀지" 추천 (`?growth=1` 성장 모드) |
 | GET/PATCH | `/api/me` | 내 프로필+실력(θ)+개인 통계 / 홈짐·기준등급 수정 |
 
+### 피드백 (개발자에게 문의하기)
+| 메서드 | 경로 | 설명 |
+|---|---|---|
+| POST | `/api/feedback` | 기능 제안·버그·의견 제출 (유저당 10분 5회 제한) |
+
+- 프로필 → "개발자에게 문의하기" 시트. 안내 모달은 계정당 1회(`User.feedbackIntroSeenAt`, `PATCH /api/me { feedbackIntroSeen: true }`).
+- 관리자(`/admin`)의 "💬 개발자 문의" 섹션에서 최신순 조회.
+
 ### 개인 모드 (크루 없이 사용)
 | 메서드 | 경로 | 설명 |
 |---|---|---|

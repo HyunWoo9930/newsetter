@@ -54,6 +54,7 @@ const EV: Record<string, { label: string; color: string }> = {
   problem_create: { label: "문제등록", color: "#d97706" },
   climb_log: { label: "완등로그", color: "#dc2626" },
   gym_favorite: { label: "즐겨찾기", color: "#e11d48" },
+  feedback: { label: "💬 피드백", color: "#f59e0b" },
   account_delete: { label: "탈퇴", color: "#ef4444" },
 };
 function evOf(type: string) {
@@ -118,6 +119,7 @@ export default async function AdminPage() {
     allUsers, crewRows, recentReviews,
     crewMemberUsers, votedUsers, attendedUsers, loggedUsers,
     recentEvents, ev7, evToday, activeToday, active7,
+    feedbacks, feedbackCount,
   ] = await Promise.all([
     prisma.user.count(),
     prisma.crew.count(),
@@ -146,6 +148,9 @@ export default async function AdminPage() {
     // 활성 유저(고유) — 오늘/7일 (로그 있는 액션 기준)
     prisma.activityEvent.findMany({ where: { createdAt: { gte: dayStart }, userId: { not: null } }, distinct: ["userId"], select: { userId: true } }),
     prisma.activityEvent.findMany({ where: { createdAt: { gte: d7 }, userId: { not: null } }, distinct: ["userId"], select: { userId: true } }),
+    // ── 개발자 문의(피드백) ──
+    prisma.feedback.findMany({ orderBy: { createdAt: "desc" }, take: 50, include: { user: { select: { nickname: true } } } }),
+    prisma.feedback.count(),
   ]);
 
   // 퍼널 집합
@@ -231,6 +236,7 @@ export default async function AdminPage() {
           <Card label="리뷰" value={reviews} />
           <Card label="문제" value={problems} />
           <Card label="완등 로그" value={climbLogs} />
+          <Card label="피드백" value={feedbackCount} sub="개발자 문의" />
         </div>
 
         {/* ── 활성화 퍼널 (이탈 지점) ── */}
@@ -340,6 +346,30 @@ export default async function AdminPage() {
                 {churnRisk.length === 0 && <tr><td style={{ ...td, color: MUTE }} colSpan={5}>이탈 위험 사용자 없음 🎉</td></tr>}
               </tbody>
             </table>
+          </div>
+        </section>
+
+        {/* ── 개발자 문의 (피드백) ── */}
+        <section style={{ background: "#fff", border: `1px solid ${LINE}`, borderRadius: 12, overflow: "hidden", marginTop: 20 }}>
+          <div style={secHdr}>💬 개발자 문의 <span style={{ fontWeight: 400, color: MUTE, fontSize: 12 }}>· 전체 {feedbackCount}건 (최근 {feedbacks.length}건 표시)</span></div>
+          <div>
+            {feedbacks.map((f) => {
+              const cat = f.category === "FEATURE"
+                ? { label: "✨ 기능", color: "#2563eb" }
+                : f.category === "BUG"
+                  ? { label: "🐛 버그", color: "#dc2626" }
+                  : { label: "💬 의견", color: "#64748b" };
+              return (
+                <div key={f.id} style={{ display: "flex", alignItems: "flex-start", gap: 10, padding: "10px 16px", borderBottom: `1px solid #f1f5f9` }}>
+                  <span style={{ fontSize: 11, fontWeight: 700, color: "#fff", background: cat.color, borderRadius: 6, padding: "2px 7px", flexShrink: 0, minWidth: 52, textAlign: "center", marginTop: 2 }}>{cat.label}</span>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 13, whiteSpace: "pre-wrap", lineHeight: 1.5, wordBreak: "break-word" }}>{f.content}</div>
+                    <div style={{ fontSize: 12, color: MUTE, marginTop: 3 }}><b>{f.user?.nickname ?? "(탈퇴 유저)"}</b> · <span title={kst(f.createdAt)}>{ago(f.createdAt)}</span></div>
+                  </div>
+                </div>
+              );
+            })}
+            {feedbacks.length === 0 && <div style={{ padding: 16, color: MUTE, fontSize: 13 }}>아직 피드백이 없어요. 유저들이 프로필 → &quot;개발자에게 문의하기&quot;로 남길 수 있어요.</div>}
           </div>
         </section>
 
